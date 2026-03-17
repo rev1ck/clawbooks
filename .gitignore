@@ -1,6 +1,7 @@
 node_modules/
 build/
-test/
+test/*
+!test/cli.regression.sh
 .claude/
 .dist/
 *.tgz

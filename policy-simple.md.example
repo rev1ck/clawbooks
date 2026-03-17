@@ -1,5 +1,36 @@
 # Accounting policy
 
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Example Studio LLC
+  entity_type: single_member_llc
+  jurisdiction: United States
+reporting:
+  basis: cash
+  financial_year_end: 12-31
+  base_currency: USD
+tax:
+  income_tax_regime: US pass-through
+  vat_registered: false
+accounts:
+  bank_accounts:
+    - Chase Business Checking
+    - Mercury
+  exchanges: []
+  wallets: []
+crypto:
+  operating_wallets: []
+  treasury_wallets: []
+capitalization:
+  threshold_amount: 2500
+  threshold_currency: USD
+  default_useful_life_months: 36
+```
+
+Use these hints as the canonical summary. Keep the narrative sections below for operating details and judgment rules.
+
 ## Entity
 
 Small web design studio. US-based, single member LLC.

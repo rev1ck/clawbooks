@@ -9,13 +9,16 @@ You are the accountant. The CLI is just data storage.
 To answer any financial question, first load context:
 
 ```bash
-clawbooks context 2026-03           # specific month
+clawbooks context 2026-03             # compact context for a specific month
+clawbooks context 2026-03 --verbose   # full raw payloads for the period
+clawbooks context 2026-03 --include-policy
+                                      # inline the full policy in the context envelope
 clawbooks context --after 2026-01-01  # everything since a date
-clawbooks context                    # everything (small ledgers)
+clawbooks context                     # everything (small ledgers)
 ```
 
-This prints the accounting policy, the latest snapshot, and all events
-in the period. Read the output, apply the policy, answer the question.
+This prints metadata, instructions, the latest snapshot, and the events
+in the period. Read the policy separately, then use the context output to answer the question.
 
 ## Writing events
 
@@ -66,13 +69,19 @@ Convention:
 When the user gives you a CSV or other raw financial data:
 
 1. Record opening balances first (if not already present)
-2. Read the raw data and the policy (`clawbooks policy`)
-3. Parse each row into a ledger event, classifying per the policy
-4. For hardware/equipment purchases that meet the capitalization threshold, set `data.capitalize: true` and optionally `data.useful_life_months`
-5. Output as JSONL and pipe to `clawbooks batch`
-6. Run `clawbooks verify --balance <closing_balance>` to cross-check against the statement's closing balance
+2. Read the raw data and the policy (`clawbooks policy` or the file at `CLAWBOOKS_POLICY`)
+3. If the source is newest-first or otherwise unsorted, normalize it into chronological order before importing
+4. Capture the source's opening balance, closing balance, expected row count, total debits, and total credits before writing events
+5. Parse each row into a ledger event, classifying per the policy
+6. Separate operating activity from taxes, owner distributions, internal transfers, and capital items while importing
+7. For hardware/equipment purchases that meet the capitalization threshold, set `data.capitalize: true` and optionally `data.useful_life_months`
+8. Output as JSONL and pipe to `clawbooks batch`
+9. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
+10. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
 
 You are the parser. There is no import tool. You read the data and write the events.
+
+This workflow applies to statement-like sources generally: bank statements, card exports, processor settlements, exchange cash reports, and other row-based account activity exports.
 
 ## Capitalizing assets
 
@@ -115,7 +124,7 @@ When asked for a P&L, tax summary, balance, etc.:
 
 1. **Start with `summary`**, not `context`. `clawbooks summary <period>` gives you pre-computed aggregates without loading every event into context.
 2. Map the output to the requested report:
-   - **P&L**: `by_type` + `by_category` → Revenue - OpEx = Gross Profit - Tax = Net
+   - **P&L**: prefer `operating_pnl`, `report_sections`, and `report_totals` over raw signed movement totals
    - **Balance Sheet**: `cash_flow.net` + opening balance (from snapshot or opening_balance events) → Assets. Capitalized assets from `clawbooks assets`. Equity = Assets - Liabilities
    - **Cash Flow Statement**: Map categories to Operating/Investing/Financing per policy
 3. Only use `clawbooks context <period>` when you need to drill into individual events — e.g., investigating a specific transaction, answering "what was that $500 charge?", or debugging a reconciliation mismatch.
@@ -127,7 +136,7 @@ After importing data from any source:
 
 1. During import, compute expected totals (count, debits, credits) from the source data
 2. Run `clawbooks verify <period> --source S` to check integrity (totals, hash, issues)
-3. Run `clawbooks verify --balance <closing_balance> --currency USD` to cross-check the statement's closing balance
+3. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency USD` when the source provides opening and closing balances
 4. Run `clawbooks reconcile <period> --source S --count N --debits N --credits N --gaps` to compare and detect date gaps
 5. Review `potential_duplicates` in verify output — same source/date/amount/description
 6. If `RECONCILED`, proceed. If `MISMATCH`, investigate and fix before generating reports
@@ -158,7 +167,7 @@ clawbooks snapshot 2026-03 --save   # compute and save to ledger
 clawbooks snapshot 2026-03          # compute and print (no save)
 ```
 
-The snapshot includes balances by currency, totals by category, and P&L by currency.
+The snapshot includes balances by currency, totals by category, and report-oriented sections for operating P&L, tax, capex, owner distributions, and transfers.
 
 ## Compacting the ledger
 
@@ -188,7 +197,7 @@ clawbooks pack 2026-01/2026-12-31 --out ./annual-pack   # pack a full year
 
 The pack includes:
 - `general_ledger.csv` — every transaction with date, source, type, category, description, amount, currency, confidence, id
-- `summary.json` — aggregates by type, category, currency, and cash flow
+- `summary.json` — aggregates by type, category, currency, cash flow, plus report-oriented sections
 - `asset_register.csv` — capitalized assets with depreciation, disposal, write-off status (if any)
 - `reclassifications.csv` — all reclassification events (if any)
 - `verify.json` — integrity hash, debit/credit totals, issues
@@ -206,12 +215,14 @@ clawbooks context [period]          # load policy + events for reasoning
 clawbooks policy                    # print policy.md
 clawbooks stats                     # ledger overview
 clawbooks verify [period]           # integrity + chain + balance check + duplicates
-clawbooks verify --balance N        # cross-check closing balance
+clawbooks verify --balance N        # cross-check closing balance against period movement
+clawbooks verify --balance N --opening-balance N
+                                     # cross-check closing balance against opening + movement
 clawbooks reconcile [period] -S     # compare expected vs actual totals
 clawbooks reconcile -S --gaps       # also detect date gaps >7 days
 clawbooks review [period]           # show items needing classification review
-clawbooks summary [period]          # pre-computed aggregates for reports
-clawbooks snapshot [period] [--save] # compute period snapshot (balances, P&L)
+clawbooks summary [period]          # aggregates + report-oriented sections for management reporting
+clawbooks snapshot [period] [--save] # compute period snapshot (balances, P&L, capex, transfers)
 clawbooks assets [--category C] [--life N] [--as-of DATE]
                                      # asset register (capitalize-flag based)
 clawbooks compact <period>           # archive old events, shrink ledger

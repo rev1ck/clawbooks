@@ -26,6 +26,8 @@ const INFLOW_TYPES = new Set([
 ]);
 const META_TYPES = new Set(["snapshot", "reclassify", "opening_balance"]);
 const ASSET_EVENT_TYPES = new Set(["disposal", "write_off", "impairment"]);
+const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
+const OPERATING_INCOME_TYPES = new Set(["income", "refund_received", "grant"]);
 
 // --- Helpers ---
 
@@ -92,23 +94,42 @@ function policyText(): string {
   return readFileSync(POLICY, "utf-8");
 }
 
+function normalizeDateBoundary(value: string, boundary: "after" | "before"): string {
+  if (value.includes("T")) return value;
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    const [y, m] = value.split("-").map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    return boundary === "after"
+      ? `${value}-01T00:00:00.000Z`
+      : `${value}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return boundary === "after"
+      ? `${value}T00:00:00.000Z`
+      : `${value}T23:59:59.999Z`;
+  }
+  return value;
+}
+
 function parsePeriod(period: string): { after: string; before: string } {
   if (period.includes("/")) {
     const [a, b] = period.split("/");
-    return { after: a, before: b };
+    return {
+      after: normalizeDateBoundary(a, "after"),
+      before: normalizeDateBoundary(b, "before"),
+    };
   }
-  const after = `${period}-01T00:00:00.000Z`;
-  const [y, m] = period.split("-").map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const before = `${period}-${String(lastDay).padStart(2, "0")}T23:59:59.999Z`;
-  return { after, before };
+  return {
+    after: normalizeDateBoundary(period, "after"),
+    before: normalizeDateBoundary(period, "before"),
+  };
 }
 
 function periodFromArgs(args: string[]): { after?: string; before?: string } {
   const f = flags(args);
   const p = positional(args);
-  let after: string | undefined = f.after;
-  let before: string | undefined = f.before;
+  let after: string | undefined = f.after ? normalizeDateBoundary(f.after, "after") : undefined;
+  let before: string | undefined = f.before ? normalizeDateBoundary(f.before, "before") : undefined;
   if (p[0]) {
     const period = parsePeriod(p[0]);
     after = after ?? period.after;
@@ -119,6 +140,124 @@ function periodFromArgs(args: string[]): { after?: string; before?: string } {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function sortByTimestamp(events: LedgerEvent[]): LedgerEvent[] {
+  return [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+}
+
+function classifyFlowSection(event: LedgerEvent): "operating_income" | "operating_expense" | "tax" | "capex" | "owner" | "transfer" | "other" {
+  if (event.type === "tax_payment") return "tax";
+  if (event.type === "owner_draw") return "owner";
+  if (TRANSFER_TYPES.has(event.type)) return "transfer";
+  if (event.data.capitalize === true) return "capex";
+  if (OPERATING_INCOME_TYPES.has(event.type)) return "operating_income";
+  if (event.type === "expense" || event.type === "fee") return "operating_expense";
+  return "other";
+}
+
+function signedAmount(event: LedgerEvent): number | undefined {
+  const amount = Number(event.data.amount);
+  if (event.data.amount === undefined || isNaN(amount)) return undefined;
+  return amount;
+}
+
+function absAmount(event: LedgerEvent): number | undefined {
+  const amount = signedAmount(event);
+  if (amount === undefined) return undefined;
+  return Math.abs(amount);
+}
+
+function buildReportingSections(events: LedgerEvent[]) {
+  const sections: Record<string, Record<string, number>> = {
+    operating_income: {},
+    operating_expenses: {},
+    tax: {},
+    capex: {},
+    owner_distributions: {},
+    internal_transfers: {},
+    other: {},
+  };
+
+  const totals = {
+    operating_income: 0,
+    operating_expenses: 0,
+    tax: 0,
+    capex: 0,
+    owner_distributions: 0,
+    internal_transfers_in: 0,
+    internal_transfers_out: 0,
+    other: 0,
+  };
+
+  for (const e of events) {
+    if (META_TYPES.has(e.type)) continue;
+    const amount = signedAmount(e);
+    if (amount === undefined) continue;
+    const category = String(e.data.category ?? e.type);
+    const section = classifyFlowSection(e);
+    const magnitude = Math.abs(amount);
+
+    if (section === "operating_income") {
+      sections.operating_income[category] = round2((sections.operating_income[category] ?? 0) + magnitude);
+      totals.operating_income = round2(totals.operating_income + magnitude);
+    } else if (section === "operating_expense") {
+      sections.operating_expenses[category] = round2((sections.operating_expenses[category] ?? 0) + magnitude);
+      totals.operating_expenses = round2(totals.operating_expenses + magnitude);
+    } else if (section === "tax") {
+      sections.tax[category] = round2((sections.tax[category] ?? 0) + magnitude);
+      totals.tax = round2(totals.tax + magnitude);
+    } else if (section === "capex") {
+      sections.capex[category] = round2((sections.capex[category] ?? 0) + magnitude);
+      totals.capex = round2(totals.capex + magnitude);
+    } else if (section === "owner") {
+      sections.owner_distributions[category] = round2((sections.owner_distributions[category] ?? 0) + magnitude);
+      totals.owner_distributions = round2(totals.owner_distributions + magnitude);
+    } else if (section === "transfer") {
+      sections.internal_transfers[category] = round2((sections.internal_transfers[category] ?? 0) + amount);
+      if (amount >= 0) totals.internal_transfers_in = round2(totals.internal_transfers_in + amount);
+      else totals.internal_transfers_out = round2(totals.internal_transfers_out + magnitude);
+    } else {
+      sections.other[category] = round2((sections.other[category] ?? 0) + amount);
+      totals.other = round2(totals.other + amount);
+    }
+  }
+
+  return {
+    sections,
+    totals,
+    operating_pnl: {
+      revenue: round2(totals.operating_income),
+      expenses: round2(totals.operating_expenses),
+      net_before_tax: round2(totals.operating_income - totals.operating_expenses),
+      tax: round2(totals.tax),
+      net_after_tax: round2(totals.operating_income - totals.operating_expenses - totals.tax),
+    },
+  };
+}
+
+function topCategoryEntries(section: Record<string, number>, limit = 5): Array<{ category: string; total: number }> {
+  return Object.entries(section)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]) || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([category, total]) => ({ category, total }));
+}
+
+function buildCompactContextSummary(summary: ReturnType<typeof buildContextSummary>) {
+  return {
+    counts: {
+      events: summary.event_count,
+      non_meta_events: summary.non_meta_event_count,
+      review_items: summary.review.needs_review,
+    },
+    operating_pnl: summary.operating_pnl,
+    cash_flow: summary.cash_flow,
+    report_totals: summary.report_totals,
+    top_operating_expenses: topCategoryEntries(summary.report_sections.operating_expenses),
+    top_capex: topCategoryEntries(summary.report_sections.capex, 3),
+    top_transfers: topCategoryEntries(summary.report_sections.internal_transfers, 3),
+    review: summary.review,
+  };
 }
 
 function buildReclassifyMap(events: LedgerEvent[]): Record<string, string> {
@@ -162,6 +301,7 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
   let outflows = 0;
   let nonMetaEvents = 0;
   let rawReclassifications = 0;
+  const reporting = buildReportingSections(events);
 
   for (const e of events) {
     eventTypes.add(e.type);
@@ -225,6 +365,9 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
       needs_review: needsReview,
       by_confidence: confidence,
     },
+    operating_pnl: reporting.operating_pnl,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
   };
 }
 
@@ -343,14 +486,18 @@ function cmdLog(args: string[]) {
 }
 
 function cmdContext(args: string[]) {
+  const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const all = readAll(LEDGER);
+  const verbose = f.verbose === "true";
+  const includePolicy = f["include-policy"] === "true";
 
   // Find latest snapshot before the window
   const snapshot = latestSnapshot(all, after);
   const effectiveAfter = snapshot?.ts ?? after;
-  const events = filter(all, { after: effectiveAfter, before }).filter((e) => e.type !== "snapshot");
+  const events = sortByTimestamp(filter(all, { after: effectiveAfter, before }).filter((e) => e.type !== "snapshot"));
   const summary = buildContextSummary(events, all);
+  const summaryOut = verbose ? summary : buildCompactContextSummary(summary);
   const metadata = {
     schema_version: "clawbooks.context.v2",
     generated_at: new Date().toISOString(),
@@ -388,25 +535,31 @@ function cmdContext(args: string[]) {
 
   console.log(`<instructions>`);
   console.log(`Read the policy first.`);
+  console.log(`Use the policy path in metadata or run \`clawbooks policy\` to inspect the full policy text.`);
   if (snapshot) {
     console.log(`Treat the snapshot as the starting state up to its as_of timestamp.`);
     console.log(`Apply the events block on top of that snapshot to answer the user's question.`);
   } else {
     console.log(`No snapshot is present for this window, so reason directly from the events block.`);
   }
-  console.log(`Prefer the summary block for orientation, but use raw events for final reasoning and edge cases.`);
+  console.log(`Prefer the summary block for orientation, and use the events block for transaction-level reasoning.`);
+  if (!verbose) {
+    console.log(`This is the compact context view. Use --verbose to print the full raw event payloads.`);
+  }
   console.log(`Reclassify events are append-only corrections; use them when interpreting categories.`);
   console.log(`Amounts are signed: inflows are positive, outflows are negative for known flow types.`);
   console.log(`</instructions>`);
   console.log();
 
-  console.log(`<policy>`);
-  console.log(policyText());
-  console.log(`</policy>`);
-  console.log();
+  if (includePolicy) {
+    console.log(`<policy>`);
+    console.log(policyText());
+    console.log(`</policy>`);
+    console.log();
+  }
 
   console.log(`<summary>`);
-  console.log(JSON.stringify(summary, null, 2));
+  console.log(JSON.stringify(summaryOut, null, 2));
   console.log(`</summary>`);
   console.log();
 
@@ -417,13 +570,34 @@ function cmdContext(args: string[]) {
     console.log();
   }
 
-  console.log(`<events count="${events.length}" after="${effectiveAfter ?? "all"}" before="${before ?? "now"}">`);
-  for (const e of events) console.log(JSON.stringify(e));
+  console.log(`<events count="${events.length}" after="${effectiveAfter ?? "all"}" before="${before ?? "now"}" verbosity="${verbose ? "full" : "compact"}">`);
+  for (const e of events) {
+    if (verbose) {
+      console.log(JSON.stringify(e));
+      continue;
+    }
+    console.log(JSON.stringify({
+      ts: e.ts,
+      source: e.source,
+      type: e.type,
+      category: String(e.data.category ?? e.type),
+      description: String(e.data.description ?? ""),
+      amount: e.data.amount,
+      currency: String(e.data.currency ?? ""),
+      confidence: String(e.data.confidence ?? ""),
+      id: e.id,
+    }));
+  }
   console.log(`</events>`);
   console.log(`</context>`);
 }
 
-function cmdPolicy() {
+function cmdPolicy(args: string[]) {
+  const f = flags(args);
+  if (f.path === "true") {
+    console.log(POLICY);
+    return;
+  }
   console.log(policyText());
 }
 
@@ -436,8 +610,9 @@ function cmdStats() {
 
   const sources = new Set(all.map((e) => e.source));
   const types = new Set(all.map((e) => e.type));
-  const first = all[0].ts;
-  const last = all[all.length - 1].ts;
+  const chronological = sortByTimestamp(all);
+  const first = chronological[0].ts;
+  const last = chronological[chronological.length - 1].ts;
   const snapshots = all.filter((e) => e.type === "snapshot").length;
 
   console.log(JSON.stringify({
@@ -455,7 +630,7 @@ function cmdVerify(args: string[]) {
   const { after, before } = periodFromArgs(args);
   const all = readAll(LEDGER);
   const isFiltered = !!(f.source || after || before);
-  const events = filter(all, { after, before, source: f.source });
+  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
   const byType: Record<string, { count: number; total: number }> = {};
   const bySource: Record<string, { count: number; total: number }> = {};
@@ -531,23 +706,39 @@ function cmdVerify(args: string[]) {
   }
 
   // Balance cross-check
-  let balanceCheck: { expected: number; actual: number; difference: number; matches: boolean } | undefined;
+  let balanceCheck: {
+    expected: number;
+    actual: number;
+    difference: number;
+    matches: boolean;
+    opening_balance?: number;
+    net_movement?: number;
+    closing_balance?: number;
+  } | undefined;
   if (f.balance !== undefined) {
     const expectedBalance = parseFloat(f.balance);
-    // Compute net of all signed amounts, optionally filtered by currency
-    let actual = 0;
+    const openingBalance = f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : 0;
+    let movement = 0;
     for (const e of events) {
       if (META_TYPES.has(e.type)) continue;
       const amount = Number(e.data.amount);
       if (isNaN(amount)) continue;
       if (f.currency && String(e.data.currency) !== f.currency) continue;
-      actual = round2(actual + amount);
+      movement = round2(movement + amount);
     }
+    const actual = round2(openingBalance + movement);
     const difference = round2(actual - expectedBalance);
     const matches = Math.abs(difference) < 0.01;
     balanceCheck = { expected: expectedBalance, actual, difference, matches };
     if (!matches) {
       issues.push(`Balance mismatch: expected ${expectedBalance}, got ${actual} (difference: ${difference})`);
+    }
+    if (f["opening-balance"] !== undefined) {
+      Object.assign(balanceCheck, {
+        opening_balance: openingBalance,
+        net_movement: movement,
+        closing_balance: actual,
+      });
     }
   }
 
@@ -590,7 +781,7 @@ function cmdReconcile(args: string[]) {
   }
 
   const all = readAll(LEDGER);
-  let events = filter(all, { after, before, source: f.source });
+  let events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
   // Filter by currency if specified
   if (f.currency) {
@@ -671,7 +862,7 @@ function cmdReview(args: string[]) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const all = readAll(LEDGER);
-  const events = filter(all, { after, before, source: f.source });
+  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
   // Find all reclassified event IDs (search full ledger)
   const reclassified = new Set(
@@ -710,7 +901,7 @@ function cmdSummary(args: string[]) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const all = readAll(LEDGER);
-  const events = filter(all, { after, before, source: f.source });
+  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
   // Build reclassification map (search full ledger)
   const reclassifyMap: Record<string, string> = {};
@@ -727,6 +918,7 @@ function cmdSummary(args: string[]) {
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0;
   let outflows = 0;
+  const reporting = buildReportingSections(events);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -782,6 +974,9 @@ function cmdSummary(args: string[]) {
       outflows: round2(outflows),
       net: round2(inflows + outflows),
     },
+    operating_pnl: reporting.operating_pnl,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
   }, null, 2));
 }
 
@@ -789,15 +984,14 @@ function cmdSnapshot(args: string[]) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const all = readAll(LEDGER);
-  const events = filter(all, { after, before });
+  const events = sortByTimestamp(filter(all, { after, before }));
 
   // Balances by currency
   const balances: Record<string, number> = {};
   // Totals by category
   const byCategory: Record<string, number> = {};
-  // P&L by currency
-  const pnl: Record<string, { income: number; expenses: number; tax: number; net: number }> = {};
   let eventCount = 0;
+  const reporting = buildReportingSections(events);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -815,16 +1009,6 @@ function cmdSnapshot(args: string[]) {
     // By category
     byCategory[category] = round2((byCategory[category] ?? 0) + amount);
 
-    // P&L
-    if (!pnl[currency]) pnl[currency] = { income: 0, expenses: 0, tax: 0, net: 0 };
-    if (e.type === "income") {
-      pnl[currency].income = round2(pnl[currency].income + amount);
-    } else if (e.type === "tax_payment") {
-      pnl[currency].tax = round2(pnl[currency].tax + amount);
-    } else if (OUTFLOW_TYPES.has(e.type)) {
-      pnl[currency].expenses = round2(pnl[currency].expenses + amount);
-    }
-    pnl[currency].net = round2(pnl[currency].net + amount);
   }
 
   const snapshotData = {
@@ -832,7 +1016,9 @@ function cmdSnapshot(args: string[]) {
     event_count: eventCount,
     balances,
     by_category: byCategory,
-    pnl,
+    operating_pnl: reporting.operating_pnl,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
   };
 
   if (f.save === "true") {
@@ -999,8 +1185,8 @@ function cmdCompact(args: string[]) {
   }
 
   const all = readAll(LEDGER);
-  const keep = all.filter((e) => e.ts > before);
-  const archive = all.filter((e) => e.ts <= before);
+  const keep = sortByTimestamp(all.filter((e) => e.ts > before));
+  const archive = sortByTimestamp(all.filter((e) => e.ts <= before));
 
   if (archive.length === 0) {
     console.log(JSON.stringify({ compacted: false, reason: "no events before cutoff" }));
@@ -1010,8 +1196,8 @@ function cmdCompact(args: string[]) {
   // Build snapshot of archived events
   const balances: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
-  const pnl: Record<string, { income: number; expenses: number; tax: number; net: number }> = {};
   let eventCount = 0;
+  const reporting = buildReportingSections(archive);
 
   for (const e of archive) {
     if (META_TYPES.has(e.type)) continue;
@@ -1022,11 +1208,6 @@ function cmdCompact(args: string[]) {
     const category = String(e.data.category ?? e.type);
     balances[currency] = round2((balances[currency] ?? 0) + amount);
     byCategory[category] = round2((byCategory[category] ?? 0) + amount);
-    if (!pnl[currency]) pnl[currency] = { income: 0, expenses: 0, tax: 0, net: 0 };
-    if (e.type === "income") pnl[currency].income = round2(pnl[currency].income + amount);
-    else if (e.type === "tax_payment") pnl[currency].tax = round2(pnl[currency].tax + amount);
-    else if (OUTFLOW_TYPES.has(e.type)) pnl[currency].expenses = round2(pnl[currency].expenses + amount);
-    pnl[currency].net = round2(pnl[currency].net + amount);
   }
 
   const snapshotData = {
@@ -1034,7 +1215,9 @@ function cmdCompact(args: string[]) {
     event_count: eventCount,
     balances,
     by_category: byCategory,
-    pnl,
+    operating_pnl: reporting.operating_pnl,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
     compacted_from: archive.length,
   };
 
@@ -1078,7 +1261,7 @@ function cmdPack(args: string[]) {
   const { after, before } = periodFromArgs(args);
   const outDir = f.out ?? `./audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`;
   const all = readAll(LEDGER);
-  const events = filter(all, { after, before, source: f.source });
+  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
   mkdirSync(outDir, { recursive: true });
 
@@ -1126,6 +1309,7 @@ function cmdPack(args: string[]) {
   const byCategory: Record<string, { count: number; total: number }> = {};
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0, outflows = 0;
+  const reporting = buildReportingSections(events);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -1150,10 +1334,13 @@ function cmdPack(args: string[]) {
     by_category: byCategory,
     by_currency: byCurrency,
     cash_flow: { inflows, outflows, net: round2(inflows + outflows) },
+    operating_pnl: reporting.operating_pnl,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
   }, null, 2) + "\n", "utf-8");
 
   // --- asset_register.csv ---
-  const capitalizedEvents = all.filter((e) => e.data.capitalize === true);
+  const capitalizedEvents = events.filter((e) => e.data.capitalize === true);
   if (capitalizedEvents.length > 0) {
     const disposals: Record<string, LedgerEvent> = {};
     const writeOffsMap: Record<string, LedgerEvent> = {};
@@ -1267,8 +1454,8 @@ Data commands:
   record  <json>              Append one event to the ledger
   batch                       Append JSONL events from stdin
   log     [flags]             Print ledger events
-  context [period] [flags]    Print policy + snapshot + events (for the agent)
-  policy                      Print policy.md
+  context [period] [flags]    Print compact policy + snapshot + events (use --verbose for full payloads)
+  policy  [--path]            Print policy.md or just the path
   stats                       Ledger summary
 
 Analysis commands:
@@ -1289,6 +1476,8 @@ Common flags:
   --before <ISO date>         Events before this date
   --source / -S <name>        Filter by source
   --type   / -T <name>        Filter by type
+  --verbose                   Print full raw payloads where supported
+  --include-policy            Inline the full policy in context output
   --last   <N>                Last N events (log only, default 20)
 
 Reconcile flags:
@@ -1300,6 +1489,7 @@ Reconcile flags:
 
 Verify flags:
   --balance  <N>              Cross-check net balance against expected value
+  --opening-balance <N>       Treat expected balance as opening balance + period movement
   --currency <C>              Filter balance check to a specific currency
 
 Period format:
@@ -1322,6 +1512,8 @@ Examples:
   clawbooks log --last 10 -S stripe
   clawbooks log -S bank -T expense
   clawbooks context 2026-03
+  clawbooks context 2026-03 --include-policy
+  clawbooks policy --path
   clawbooks verify 2026-03
   clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --currency USD --gaps
   clawbooks review --source bank
@@ -1334,7 +1526,7 @@ Examples:
 
 Agent workflow:
   1. Agent runs: clawbooks context 2026-03
-  2. Agent reads the output (policy + events)
+  2. Agent reads the output and the policy
   3. Agent reasons over it and answers your question
   4. Agent runs: clawbooks record '...' to write new events
   5. Agent runs: clawbooks verify + reconcile to check integrity
@@ -1351,7 +1543,7 @@ switch (cmd) {
   case "batch":     await cmdBatch(); break;
   case "log":       cmdLog(args); break;
   case "context":   cmdContext(args); break;
-  case "policy":    cmdPolicy(); break;
+  case "policy":    cmdPolicy(args); break;
   case "stats":     cmdStats(); break;
   case "verify":    cmdVerify(args); break;
   case "reconcile": cmdReconcile(args); break;

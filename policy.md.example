@@ -1,5 +1,35 @@
 # Accounting policy
 
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Example Company
+  entity_type: company
+  jurisdiction: Replace with your jurisdiction
+reporting:
+  basis: cash
+  financial_year_end: 12-31
+  base_currency: USD
+tax:
+  income_tax_regime: Replace with your tax regime
+  vat_registered: false
+accounts:
+  bank_accounts:
+    - operating account
+  exchanges: []
+  wallets: []
+crypto:
+  operating_wallets: []
+  treasury_wallets: []
+capitalization:
+  threshold_amount: 2500
+  threshold_currency: USD
+  default_useful_life_months: 36
+```
+
+Use these hints as the canonical, machine-readable summary of the policy. Keep the narrative sections below for detail, exceptions, and examples.
+
 ## Entity
 
 Describe your business here.
@@ -51,7 +81,7 @@ Your jurisdiction and relevant rules.
 ### Post-import checklist
 1. **Count**: verify event count matches source row count
 2. **Debits/credits**: verify totals match source statement totals
-3. **Closing balance**: `clawbooks verify --balance <closing> --currency USD`
+3. **Closing balance**: `clawbooks verify --balance <closing> --opening-balance <opening> --currency USD`
 4. **Duplicates**: review `potential_duplicates` in verify output
 5. **Gaps**: `clawbooks reconcile --source S --gaps` to find date gaps >7 days
 

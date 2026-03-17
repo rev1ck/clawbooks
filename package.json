@@ -1,6 +1,6 @@
 {
   "name": "clawbooks",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Accounting by inference, not by engine. Zero dependencies.",
   "type": "module",
   "repository": {
@@ -24,6 +24,7 @@
   },
   "scripts": {
     "build": "tsc && chmod 755 build/cli.js",
+    "test": "npm run build && /usr/bin/bash test/cli.regression.sh",
     "prepare": "npm run build",
     "prepack": "npm run build",
     "scoped:prepare": "npm run build && node scripts/prepare-scoped-package.mjs",

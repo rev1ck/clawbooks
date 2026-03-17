@@ -1,5 +1,43 @@
 # Accounting policy
 
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Example Trading Operation
+  entity_type: individual
+  jurisdiction: United States
+reporting:
+  basis: accrual
+  financial_year_end: 12-31
+  base_currency: USD
+tax:
+  income_tax_regime: US individual trading
+  vat_registered: false
+accounts:
+  bank_accounts: []
+  exchanges:
+    - Hyperliquid
+    - Polymarket
+  wallets:
+    - Ethereum mainnet primary
+    - Arbitrum primary
+    - Polygon primary
+crypto:
+  operating_wallets:
+    - 0x_eth_main
+    - 0x_arb
+    - 0x_polygon
+  treasury_wallets: []
+  cost_basis_method: FIFO
+capitalization:
+  threshold_amount: 0
+  threshold_currency: USD
+  default_useful_life_months: 36
+```
+
+Use these hints as the canonical summary. Keep the narrative sections below for venue-specific rules, tax assumptions, and edge-case handling.
+
 ## Entity
 
 Solo quantitative trader operating across centralized exchanges, DeFi protocols, and prediction markets. US tax resident. Not registered as a company — individual trader.

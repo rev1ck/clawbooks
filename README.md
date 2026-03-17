@@ -84,6 +84,14 @@ With `context`, `summary`, `verify`, `reconcile`, `assets`, and `pack`, your age
 Clawbooks supplies durable memory, verification, and repeatable tooling.
 The agent does the accounting work on top of that foundation.
 
+For statement-like sources, the intended operator loop is:
+
+- sort the source into chronological order if needed
+- capture opening balance, closing balance, expected count, debits, and credits
+- import normalized events
+- run `reconcile` against the source totals
+- run `verify --balance ... --opening-balance ...` when statement balances are available
+
 ## Boundaries
 
 You and your agent:
@@ -109,7 +117,7 @@ As `policy.md` gets better, your ingestion, classification, and reporting get be
 You: "What's my P&L for March?"
 
 Agent runs:    clawbooks context 2026-03
-Agent reads:   policy + snapshot + events
+Agent reads:   policy + summary + events
 Agent reasons: applies the policy to the records
 Agent replies: "Revenue: $1,700. Expenses: $475. Net: $1,225."
 ```
@@ -137,7 +145,7 @@ cp policy.md.example policy.md   # edit with your own accounting rules
 ## How it works
 
 Clawbooks stores financial events and outputs accounting context.
-The important command is `clawbooks context`: it prints a structured context envelope with metadata, instructions, policy, summary, snapshot, and raw events so an agent can reason from both overview and detail.
+The important command is `clawbooks context`: it prints a compact working envelope with metadata, instructions, a high-signal summary, snapshot data when present, and event rows for transaction-level reasoning. The policy remains the source of truth on disk and is referenced by path. Use `--verbose` when you want the full internal summary and raw event payloads, or `--include-policy` to inline the policy text.
 
 ## Commands
 
@@ -153,14 +161,20 @@ clawbooks stats
 
 # Load context for the agent
 clawbooks context 2026-03
+clawbooks context 2026-03 --verbose
+clawbooks context 2026-03 --include-policy
 clawbooks context --after 2026-01-01
+clawbooks policy
+clawbooks policy --path
 
 # Analysis
 clawbooks verify 2026-03                            # integrity + chain + duplicates
-clawbooks verify --balance 50000 --currency USD     # cross-check closing balance
+clawbooks verify --balance 50000 --currency USD     # cross-check closing balance against period movement
+clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD
+                                                    # cross-check opening + movement = closing
 clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --gaps
 clawbooks review --source bank                      # items needing classification
-clawbooks summary 2026-03                           # aggregates for reports
+clawbooks summary 2026-03                           # aggregates + report-oriented sections
 clawbooks snapshot 2026-03 --save                   # persist period snapshot
 clawbooks assets --as-of 2026-03-31                 # asset register + depreciation
 
@@ -178,10 +192,9 @@ This is the core command. It prints a `context` envelope for the requested perio
 
 - `metadata` explains the requested and effective window, whether a snapshot was used, and what kinds of records are present
 - `instructions` tells the agent how to interpret snapshot plus events
-- `policy` is your plain-English accounting policy
-- `summary` provides orientation before the raw records
+- `summary` provides a compact management view before the event rows, including operating P&L, cash movement, review counts, and top categories
 - `snapshot` is the starting state, when available
-- `events` contains the raw append-only records the agent should reason from
+- `events` contains compact event rows by default; use `--verbose` for full raw records
 
 ```bash
 $ clawbooks context 2026-03
@@ -200,34 +213,33 @@ $ clawbooks context 2026-03
 
 <instructions>
 Read the policy first.
+Use the policy path in metadata or run `clawbooks policy` to inspect the full policy text.
 Treat the snapshot as the starting state.
 Apply the events block on top of that snapshot.
 </instructions>
 
-<policy>
-# Accounting policy
-Cash basis. Crypto trades are revenue income...
-</policy>
-
 <summary>
 {
-  "by_type": {"income":{"count":12,"total":1700},"fee":{"count":3,"total":-55}},
-  "by_currency": {"USD":{"count":15,"total":1645}},
-  "cash_flow": {"inflows":1700,"outflows":-55,"net":1645}
+  "counts": {"events":47,"non_meta_events":47,"review_items":2},
+  "operating_pnl": {"revenue":1700,"expenses":55,"net_before_tax":1645,"tax":0,"net_after_tax":1645},
+  "cash_flow": {"inflows":1700,"outflows":-55,"net":1645},
+  "top_operating_expenses": [{"category":"hosting","total":40},{"category":"bank_fees","total":15}]
 }
 </summary>
 
 <snapshot as_of="2026-03-01T00:00:00.000Z">
-{"balances":{"USD":45000},"ytd_pnl":18450}
+{"balances":{"USD":45000},"operating_pnl":{"revenue":1700,"expenses":475,"net_before_tax":1225,"tax":0,"net_after_tax":1225}}
 </snapshot>
 
-<events count="47" after="2026-03-01T00:00:00.000Z" before="2026-03-31T23:59:59.999Z">
-{"ts":"...","source":"stripe","type":"payment","data":{"amount":500,...}}
-{"ts":"...","source":"bank","type":"fee","data":{"amount":-55,...}}
+<events count="47" after="2026-03-01T00:00:00.000Z" before="2026-03-31T23:59:59.999Z" verbosity="compact">
+{"ts":"...","source":"stripe","type":"income","category":"service_revenue","description":"Acme invoice","amount":500,"currency":"USD","confidence":"clear","id":"..."}
+{"ts":"...","source":"bank","type":"fee","category":"bank_fees","description":"Monthly fee","amount":-55,"currency":"USD","confidence":"clear","id":"..."}
 ...
 </events>
 </context>
 ```
+
+Use `clawbooks context 2026-03 --verbose` when the compact envelope is not enough.
 
 ## Importing data
 
@@ -237,9 +249,12 @@ There is no import command. The agent is the importer.
 You: [paste CSV] "Import this bank statement"
 
 Agent: reads the CSV
+       sorts it into chronological order if needed
        reads policy via `clawbooks policy`
+       captures opening/closing balances and expected totals
        classifies each row per the policy
        outputs JSONL and pipes it to `clawbooks batch`
+       runs `clawbooks reconcile` and `clawbooks verify`
 
 Agent: "Recorded 47 events from Chase March statement."
 ```
