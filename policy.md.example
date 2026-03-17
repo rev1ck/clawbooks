@@ -1,0 +1,80 @@
+# Accounting policy
+
+## Entity
+
+Describe your business here.
+
+## Currencies
+
+Base currency: USD.
+The CLI aggregates per-currency; the agent handles cross-currency reporting and conversions when needed.
+
+## Revenue recognition
+
+Cash basis. Income is recognized when payment is received.
+
+## Expense classification
+
+### Operating expenses (OpEx)
+- **Software subscriptions** (Figma, hosting, domains, SaaS tools)
+- **Home office**: allocate 15% of rent and utilities as business expense
+- **Meals with clients**: 50% deductible business expense
+- **Conference travel**: fully deductible if business purpose documented
+- **Office supplies**: consumables, stationery, minor accessories
+- **Professional services**: legal, accounting, consulting
+- **Insurance**: business-related insurance premiums
+- **Bank fees**: monthly fees, transaction charges, card fees
+
+### Cost of goods sold (COGS)
+- **Contractor payments**: direct labor for client deliverables
+- **Platform fees**: marketplace commissions, payment processing fees tied to revenue
+
+### Capital expenditure (CapEx)
+See capitalization policy below. Hardware, equipment, and other tangible assets above the threshold are capitalized, not expensed.
+
+## Capitalization policy
+
+- **Threshold**: $2,500 — items below this are expensed immediately
+- **Method**: straight-line depreciation
+- **Default useful life**: 36 months (per-asset override via `data.useful_life_months`)
+- **Selection**: events with `data.capitalize: true` appear in the asset register
+- **Disposal**: record a `disposal` event with `data.asset_id` and `data.proceeds`. Gain/loss = proceeds - net book value
+- **Write-off**: record a `write_off` event with `data.asset_id`. Remaining NBV is a loss
+- **Impairment**: record an `impairment` event with `data.asset_id` and `data.impairment_amount`. Reduces carrying value
+
+## Tax jurisdiction
+
+Your jurisdiction and relevant rules.
+
+## Reconciliation
+
+### Post-import checklist
+1. **Count**: verify event count matches source row count
+2. **Debits/credits**: verify totals match source statement totals
+3. **Closing balance**: `clawbooks verify --balance <closing> --currency USD`
+4. **Duplicates**: review `potential_duplicates` in verify output
+5. **Gaps**: `clawbooks reconcile --source S --gaps` to find date gaps >7 days
+
+### Cross-source checks
+When importing from multiple sources (bank, Stripe, manual), verify:
+- No double-counting of the same transaction across sources
+- Transfers between accounts net to zero
+- Opening balances + net transactions = closing balances per source
+
+## Reporting
+
+### Monthly
+- **P&L**: revenue, operating expenses, COGS, tax, net income
+- **Cash flow**: inflows vs outflows by category
+- **Reconciliation**: verify + reconcile for each source imported that month
+
+### Quarterly
+- **Balance sheet**: assets (cash + capitalized), liabilities, equity
+- **Asset register**: `clawbooks assets --as-of <quarter-end>` — active, disposed, written-off
+- **Tax estimate**: projected tax based on year-to-date income
+
+### Annual
+- **Full P&L**: 12-month income statement with monthly breakdown
+- **Balance sheet**: year-end position
+- **Asset register**: full depreciation schedule, disposals, write-offs
+- **Tax preparation**: categorized expenses, income by source, deductions summary

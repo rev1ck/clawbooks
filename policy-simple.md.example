@@ -1,0 +1,48 @@
+# Accounting policy
+
+## Entity
+
+Small web design studio. US-based, single member LLC.
+Cash basis accounting. Fiscal year: January to December.
+Base currency: USD.
+
+## Revenue recognition
+
+Income is recognized when payment is received, not when invoiced.
+All client payments are service revenue.
+Crypto payments are converted to USD at the spot price at time of receipt and recognized as service revenue at that USD amount. The crypto itself is not held as an investment — convert or record the USD equivalent immediately.
+
+## Expense classification
+
+- **Software subscriptions** (Figma, hosting, domains): operating expenses
+- **Contractor payments**: cost of goods sold
+- **Hardware** (laptops, monitors): capitalize if over $2,500, otherwise operating expense. Depreciate capitalized assets over 3 years straight-line.
+- **Home office**: allocate 15% of rent and utilities as business expense
+- **Meals with clients**: 50% deductible business expense
+- **Conference travel**: fully deductible if business purpose documented
+
+## Tax
+
+Quarterly estimated tax payments due: April 15, June 15, September 15, January 15.
+Self-employment tax rate: 15.3% on net earnings.
+Set aside 30% of net income for combined federal + state + SE tax.
+State: California.
+
+## Bank accounts
+
+- Chase Business Checking: primary operating account
+- Mercury: secondary / savings
+- Stripe: payment processing (settlement to Chase, 2-day rolling)
+
+When Stripe settles to Chase, do not double-count. The Stripe payout and the Chase deposit are the same money. Match them by amount and date (±2 days).
+
+## Invoicing
+
+Net 30 terms. Invoices over 45 days past due should be flagged.
+Deposits (typically 50% upfront) are recognized as revenue when received, not deferred.
+
+## Reports
+
+- Monthly: P&L summary, outstanding invoices, cash position
+- Quarterly: tax estimate, P&L by client, expense breakdown by category
+- Annual: full P&L, balance sheet, Schedule C preparation

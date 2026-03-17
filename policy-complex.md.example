@@ -1,0 +1,149 @@
+# Accounting policy
+
+## Entity
+
+Solo quantitative trader operating across centralized exchanges, DeFi protocols, and prediction markets. US tax resident. Not registered as a company — individual trader.
+
+Base currency: USD for all P&L tracking.
+Fiscal year: January 1 to December 31.
+
+## Jurisdiction notes
+
+The IRS treats crypto as property (Notice 2014-21, Rev. Rul. 2019-24). For a frequent trader:
+- Short-term gains (held < 1 year) are taxed as ordinary income
+- Long-term gains (held > 1 year) are taxed at capital gains rates (0%, 15%, or 20%)
+
+This operation is frequent trading. **All crypto gains and losses are short-term unless a specific lot has been held over 1 year.**
+
+## Cost basis
+
+FIFO (First In, First Out) for all assets across all venues.
+
+Track cost basis per asset in USD.
+
+Lot tracking: each acquisition event creates a lot. Each disposal event consumes lots in FIFO order. The LLM must maintain a running lot schedule when generating reports.
+
+## Source: Hyperliquid
+
+Hyperliquid is a perpetual futures DEX. Events from this source include:
+
+- **Trades** (type: `trade`): opening or closing perpetual positions. The `side` field indicates buy/sell. These are leveraged positions, not spot purchases. Track the notional value and the margin used.
+- **Funding payments** (type: `funding`): periodic funding rate payments. If rate is positive and you're long, you pay. If rate is positive and you're short, you receive. Classify as **interest expense** (paid) or **interest income** (received).
+- **Liquidations** (type: `liquidation`): forced closure of a position. Classify the loss as a **realized trading loss**. Flag for review — liquidations indicate risk management failure.
+- **Deposits/Withdrawals** (type: `transfer`): movement of USDC to/from the Hyperliquid bridge contract on Arbitrum. These are not income or expense — they are transfers between own accounts. Match the on-chain transfer with the Hyperliquid balance change.
+
+### Hyperliquid P&L
+
+Realized P&L on each trade = (exit price - entry price) x quantity x direction.
+Include all fees (taker/maker) as a deduction from the P&L, not as a separate expense line.
+Unrealized P&L on open positions should be reported separately and NOT included in taxable income until the position is closed.
+
+## Source: Polymarket
+
+Polymarket is a binary prediction market on Polygon. Events include:
+
+- **Position entry** (type: `trade`): buying YES or NO shares on a market. Cost basis = price paid per share x quantity. These are **speculative derivative contracts**, not purchases of an underlying asset.
+- **Settlement** (type: `settlement`): market resolves. If the position wins, payout = number of shares x $1.00. If it loses, payout = $0. Realize the gain or loss as: payout - cost basis.
+- **Redemption** (type: `trade`, side: `sell`): selling a position before settlement. Realize gain/loss as: sale proceeds - cost basis (FIFO).
+
+### Polymarket classification
+
+Classify all Polymarket activity as **speculative derivative income/loss**. This is distinct from the trading income on Hyperliquid — keep them as separate line items in reports.
+
+## Source: Ethereum / Arbitrum / Polygon (on-chain)
+
+Chain watchers emit transfer events. Classification rules:
+
+- **Transfers between own wallets**: not income/expense. Internal transfer. Match by amount and token across the two addresses. Maintain a list of own addresses (see Known Addresses below).
+- **Bridge transactions**: transfers to/from bridge contracts. These are internal transfers that may take time to complete. Match the source chain debit with the destination chain credit. If the amounts don't match after 1 hour, flag as a potential bridge failure.
+- **Gas fees**: classify as **operating expense: gas**. Always denominated in the chain's native token (ETH, MATIC). Convert to USD at the block timestamp.
+- **Token approvals**: zero economic impact, but record the gas fee.
+- **Failed transactions**: the transaction reverted but gas was still consumed. Classify the gas as **operating expense: failed transaction gas**. This is deductible.
+- **Unknown contract interactions**: flag for manual review. Do not auto-classify interactions with unrecognized contracts.
+
+## Source: Agent (autonomous agents, bots, etc.)
+
+Agent-generated events are annotations, not primary financial events. They provide context for the LLM but do not create new economic activity.
+
+- **Notes** (type: `note`): agent's commentary on a trade, strategy, or observation. Use these for context when generating reports but do not create journal entries from them.
+- **Signals** (type: `signal`): agent's trading signals. These are informational only — the actual trade event from the exchange is the authoritative record.
+
+Exception: if an agent records a type: `adjustment`, treat it as a legitimate correction (same as a human adjustment). The adjustment must include a `reason` field.
+
+## Reconciliation rules
+
+### Trade booking vs on-chain settlement
+
+When a trade is executed on Hyperliquid/Polymarket, the exchange event and the on-chain settlement may not match exactly. Rules:
+
+| Delta | Classification | Action |
+|-------|---------------|--------|
+| < 0.1% | Slippage | Auto-classify, no flag |
+| 0.1% - 1.0% | Fee variance | Log as operating expense: execution variance |
+| > 1.0% | Discrepancy | Flag for manual review, do not auto-classify |
+
+### Cross-source matching
+
+When the same economic event appears from multiple sources (e.g., a Hyperliquid trade appears both in the exchange feed and in the Arbitrum chain watcher), deduplicate:
+
+1. Check `id` (content hash) — if identical, skip the duplicate
+2. If hashes differ (different raw payloads), match by: timestamp (+/-30 seconds) + amount (+/-0.5%) + token
+3. If matched, keep the exchange source as primary (more detailed), link the on-chain source as confirmation
+4. If not matched, flag both events for review
+
+## Known addresses
+
+These are all my addresses. Transfers between them are internal.
+
+- `0x_eth_main` — Ethereum mainnet primary
+- `0x_arb` — Arbitrum primary
+- `0x_polygon` — Polygon primary
+- `0x_hl_deposit` — Hyperliquid deposit address
+
+(Replace with actual addresses)
+
+## Reporting
+
+### Monthly
+- P&L by source (Hyperliquid, Polymarket, other)
+- Realized vs unrealized breakdown
+- Funding income/expense
+- Gas costs
+- Open positions with unrealized P&L
+- Cash/stablecoin balances across all venues
+
+### Quarterly
+- Tax estimate (quarterly estimated payments due: April 15, June 15, September 15, January 15)
+- Strategy performance: arb P&L (HL long + PM short combined)
+- Win rate by market type
+- Risk metrics: max drawdown, largest single loss
+- Reconciliation status: any unresolved discrepancies
+
+### Annual (tax filing)
+- Total income from trading (all sources)
+- Total deductible expenses (gas, fees, execution variance, home office if applicable)
+- Net taxable income
+- Supporting schedule: every realized gain/loss with dates, amounts, cost basis
+- Schedule D / Form 8949 preparation notes
+
+## Special rules
+
+### The arb strategy
+
+The primary strategy is microstructure arbitrage between Hyperliquid and Polymarket on short-term BTC price windows. This means:
+
+- A Hyperliquid long/short AND a Polymarket YES/NO position are opened together as a single economic unit
+- When reporting arb P&L, combine the HL leg and PM leg into a single arb trade with net P&L
+- For tax purposes, each leg is still reported individually (IRS doesn't recognize synthetic positions)
+- For management accounting, report both: individual leg P&L AND combined arb P&L
+
+### Stablecoin treatment
+
+USDC, USDT, and DAI are treated as cash equivalents. Do not track cost basis on stablecoins — treat them as USD at 1:1. If a stablecoin depegs more than 2%, flag and begin tracking cost basis from that point.
+
+### Airdrops and rewards
+
+Any tokens received as airdrops, staking rewards, or protocol incentives:
+- Recognize as income at fair market value at time of receipt
+- Cost basis = fair market value at receipt
+- If no reliable price feed exists, flag for manual valuation
