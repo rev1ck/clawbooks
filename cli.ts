@@ -121,6 +121,113 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function buildReclassifyMap(events: LedgerEvent[]): Record<string, string> {
+  const reclassifyMap: Record<string, string> = {};
+  for (const e of events) {
+    if (e.type === "reclassify" && e.data.original_id && e.data.new_category) {
+      reclassifyMap[String(e.data.original_id)] = String(e.data.new_category);
+    }
+  }
+  return reclassifyMap;
+}
+
+function reviewCounts(events: LedgerEvent[], all: LedgerEvent[]): Record<string, number> {
+  const reclassified = new Set(
+    all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
+  );
+  const counts = { unclear: 0, inferred: 0, unset: 0, clear: 0 };
+
+  for (const e of events) {
+    if (e.type === "reclassify" || e.type === "snapshot" || reclassified.has(e.id)) continue;
+    const confidence = String(e.data.confidence ?? "unset");
+    if (confidence === "clear") counts.clear++;
+    else if (confidence === "unclear") counts.unclear++;
+    else if (confidence === "inferred") counts.inferred++;
+    else counts.unset++;
+  }
+
+  return counts;
+}
+
+function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
+  const reclassifyMap = buildReclassifyMap(all);
+  const byType: Record<string, { count: number; total: number }> = {};
+  const bySource: Record<string, { count: number; total: number }> = {};
+  const byCurrency: Record<string, { count: number; total: number }> = {};
+  const byCategory: Record<string, { count: number; total: number }> = {};
+  const eventTypes = new Set<string>();
+  const sources = new Set<string>();
+  const currencies = new Set<string>();
+  let inflows = 0;
+  let outflows = 0;
+  let nonMetaEvents = 0;
+  let rawReclassifications = 0;
+
+  for (const e of events) {
+    eventTypes.add(e.type);
+    sources.add(e.source);
+    if (e.type === "reclassify") rawReclassifications++;
+    if (META_TYPES.has(e.type)) continue;
+
+    nonMetaEvents++;
+    const amount = Number(e.data.amount);
+    const currency = String(e.data.currency ?? "UNKNOWN");
+    const category = reclassifyMap[e.id] ?? String(e.data.category ?? e.type);
+    currencies.add(currency);
+
+    if (!byType[e.type]) byType[e.type] = { count: 0, total: 0 };
+    byType[e.type].count++;
+
+    if (!bySource[e.source]) bySource[e.source] = { count: 0, total: 0 };
+    bySource[e.source].count++;
+
+    if (!byCurrency[currency]) byCurrency[currency] = { count: 0, total: 0 };
+    byCurrency[currency].count++;
+
+    if (!byCategory[category]) byCategory[category] = { count: 0, total: 0 };
+    byCategory[category].count++;
+
+    if (isNaN(amount)) continue;
+
+    byType[e.type].total = round2(byType[e.type].total + amount);
+    bySource[e.source].total = round2(bySource[e.source].total + amount);
+    byCurrency[currency].total = round2(byCurrency[currency].total + amount);
+    byCategory[category].total = round2(byCategory[category].total + amount);
+
+    if (amount > 0) inflows = round2(inflows + amount);
+    else outflows = round2(outflows + amount);
+  }
+
+  const confidence = reviewCounts(events, all);
+  const needsReview = confidence.unclear + confidence.inferred + confidence.unset;
+  const reclassifiedEventCount = events.filter((e) => reclassifyMap[e.id] !== undefined).length;
+
+  return {
+    event_count: events.length,
+    non_meta_event_count: nonMetaEvents,
+    event_types: [...eventTypes].sort(),
+    sources: [...sources].sort(),
+    currencies: [...currencies].sort(),
+    by_type: byType,
+    by_source: bySource,
+    by_currency: byCurrency,
+    by_category: byCategory,
+    cash_flow: {
+      inflows: round2(inflows),
+      outflows: round2(outflows),
+      net: round2(inflows + outflows),
+    },
+    reclassifications: {
+      raw_events_in_window: rawReclassifications,
+      applied_to_events_in_window: reclassifiedEventCount,
+    },
+    review: {
+      needs_review: needsReview,
+      by_confidence: confidence,
+    },
+  };
+}
+
 function enforceSign(type: string, data: Record<string, unknown>): void {
   if (data.amount === undefined) return;
   const amount = Number(data.amount);
@@ -243,11 +350,64 @@ function cmdContext(args: string[]) {
   const snapshot = latestSnapshot(all, after);
   const effectiveAfter = snapshot?.ts ?? after;
   const events = filter(all, { after: effectiveAfter, before }).filter((e) => e.type !== "snapshot");
+  const summary = buildContextSummary(events, all);
+  const metadata = {
+    schema_version: "clawbooks.context.v2",
+    generated_at: new Date().toISOString(),
+    ledger_path: LEDGER,
+    policy_path: POLICY,
+    requested_window: {
+      after: after ?? "all",
+      before: before ?? "now",
+    },
+    effective_window: {
+      after: effectiveAfter ?? "all",
+      before: before ?? "now",
+    },
+    snapshot: snapshot ? {
+      used: true,
+      ts: snapshot.ts,
+      source: snapshot.source,
+      id: snapshot.id,
+      event_count: Number(snapshot.data.event_count ?? 0),
+    } : {
+      used: false,
+    },
+    event_count: events.length,
+    sources: summary.sources,
+    event_types: summary.event_types,
+    currencies: summary.currencies,
+  };
 
   // Output structured context for the agent
+  console.log(`<context schema="clawbooks.context.v2">`);
+  console.log(`<metadata>`);
+  console.log(JSON.stringify(metadata, null, 2));
+  console.log(`</metadata>`);
+  console.log();
+
+  console.log(`<instructions>`);
+  console.log(`Read the policy first.`);
+  if (snapshot) {
+    console.log(`Treat the snapshot as the starting state up to its as_of timestamp.`);
+    console.log(`Apply the events block on top of that snapshot to answer the user's question.`);
+  } else {
+    console.log(`No snapshot is present for this window, so reason directly from the events block.`);
+  }
+  console.log(`Prefer the summary block for orientation, but use raw events for final reasoning and edge cases.`);
+  console.log(`Reclassify events are append-only corrections; use them when interpreting categories.`);
+  console.log(`Amounts are signed: inflows are positive, outflows are negative for known flow types.`);
+  console.log(`</instructions>`);
+  console.log();
+
   console.log(`<policy>`);
   console.log(policyText());
   console.log(`</policy>`);
+  console.log();
+
+  console.log(`<summary>`);
+  console.log(JSON.stringify(summary, null, 2));
+  console.log(`</summary>`);
   console.log();
 
   if (snapshot) {
@@ -260,6 +420,7 @@ function cmdContext(args: string[]) {
   console.log(`<events count="${events.length}" after="${effectiveAfter ?? "all"}" before="${before ?? "now"}">`);
   for (const e of events) console.log(JSON.stringify(e));
   console.log(`</events>`);
+  console.log(`</context>`);
 }
 
 function cmdPolicy() {

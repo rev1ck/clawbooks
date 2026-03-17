@@ -11,6 +11,28 @@ No rules engine. No SDK. No framework.
 
 **Two source files. Zero runtime dependencies.**
 
+Bring CSVs, Stripe exports, exchange fills, receipts, PDFs, or copied transaction text.
+Your agent reads the source, applies `policy.md`, writes normalized ledger events into clawbooks, and produces statements, summaries, and audit packs from the same record.
+
+## The loop
+
+```text
+Raw inputs
+bank CSVs / Stripe exports / receipts / PDFs / exchange fills / copied text
+  ->
+Agent ingestion
+reads the source + applies policy.md + writes normalized ledger events
+  ->
+Clawbooks ledger
+append-only records + snapshots + verification + context + packs
+  ->
+Agent outputs
+P&L / balance sheet / cash flow / tax views / asset register / audit-ready working files
+  ->
+Policy improvement
+you refine policy.md and the next ingestion/reporting cycle gets better
+```
+
 ## Why
 
 Most accounting software assumes the product should contain the accounting logic.
@@ -29,6 +51,53 @@ That makes clawbooks useful anywhere an agent can read files and run shell comma
 - CLI commands for recording, reviewing, reconciling, compacting, and packaging records
 - Structured `context` output designed for agent reasoning
 - Zero runtime dependencies
+
+## How ingestion works
+
+Clawbooks does not ship source-specific import logic.
+That is deliberate.
+
+Your agent is the importer:
+
+- bring raw inputs in whatever form you already have
+- the agent reads them and applies `policy.md`
+- the agent converts them into normalized ledger events
+- clawbooks stores the canonical record
+
+This keeps ingestion programmable by policy instead of hardcoded per integration.
+
+## What the agent can produce
+
+With `context`, `summary`, `verify`, `reconcile`, `assets`, and `pack`, your agent can prepare:
+
+- profit and loss statements
+- balance sheets
+- cash flow summaries
+- categorized tax views
+- asset registers and depreciation views
+- audit-ready working packs
+
+Clawbooks supplies durable memory, verification, and repeatable tooling.
+The agent does the accounting work on top of that foundation.
+
+## Boundaries
+
+You and your agent:
+
+- write and refine `policy.md`
+- ingest source documents and convert them into ledger events
+- interpret edge cases
+- review outputs and improve the policy over time
+
+clawbooks:
+
+- stores append-only financial records
+- preserves snapshots and audit history
+- provides structured context for the agent
+- verifies integrity and reconciliation surfaces
+- packages records for downstream review and reporting
+
+As `policy.md` gets better, your ingestion, classification, and reporting get better too.
 
 ## Example
 
@@ -64,7 +133,7 @@ cp policy.md.example policy.md   # edit with your own accounting rules
 ## How it works
 
 Clawbooks stores financial events and outputs accounting context.
-The important command is `clawbooks context`: it prints your policy, the latest snapshot, and the relevant events in XML-style blocks so an agent can read and reason over them.
+The important command is `clawbooks context`: it prints a structured context envelope with metadata, instructions, policy, summary, snapshot, and raw events so an agent can reason from both overview and detail.
 
 ## Commands
 
@@ -101,25 +170,59 @@ clawbooks policy
 
 ## The context command
 
-This is the core command. It prints your accounting policy, the latest snapshot, and the events for a period, wrapped in XML tags so the agent can read and reason over them.
+This is the core command. It prints a `context` envelope for the requested period:
+
+- `metadata` explains the requested and effective window, whether a snapshot was used, and what kinds of records are present
+- `instructions` tells the agent how to interpret snapshot plus events
+- `policy` is your plain-English accounting policy
+- `summary` provides orientation before the raw records
+- `snapshot` is the starting state, when available
+- `events` contains the raw append-only records the agent should reason from
 
 ```bash
 $ clawbooks context 2026-03
+
+<context schema="clawbooks.context.v2">
+<metadata>
+{
+  "requested_window": {"after":"2026-03-01T00:00:00.000Z","before":"2026-03-31T23:59:59.999Z"},
+  "effective_window": {"after":"2026-03-01T00:00:00.000Z","before":"2026-03-31T23:59:59.999Z"},
+  "snapshot": {"used": true, "ts":"2026-03-01T00:00:00.000Z"},
+  "event_count": 47,
+  "sources": ["bank", "stripe"],
+  "currencies": ["USD"]
+}
+</metadata>
+
+<instructions>
+Read the policy first.
+Treat the snapshot as the starting state.
+Apply the events block on top of that snapshot.
+</instructions>
 
 <policy>
 # Accounting policy
 Cash basis. Crypto trades are revenue income...
 </policy>
 
-<snapshot as_of="2026-03-01">
-{"balances":{"USDC":45000},"ytd_pnl":18450}
+<summary>
+{
+  "by_type": {"income":{"count":12,"total":1700},"fee":{"count":3,"total":-55}},
+  "by_currency": {"USD":{"count":15,"total":1645}},
+  "cash_flow": {"inflows":1700,"outflows":-55,"net":1645}
+}
+</summary>
+
+<snapshot as_of="2026-03-01T00:00:00.000Z">
+{"balances":{"USD":45000},"ytd_pnl":18450}
 </snapshot>
 
-<events count="47" after="2026-03-01" before="2026-03-31">
+<events count="47" after="2026-03-01T00:00:00.000Z" before="2026-03-31T23:59:59.999Z">
 {"ts":"...","source":"stripe","type":"payment","data":{"amount":500,...}}
 {"ts":"...","source":"bank","type":"fee","data":{"amount":-55,...}}
 ...
 </events>
+</context>
 ```
 
 ## Importing data
