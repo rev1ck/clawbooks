@@ -1,8 +1,12 @@
-# clawbooks
+<p align="center">
+  <img src="./assets/logo.svg" alt="clawbooks" width="760">
+</p>
 
-Accounting by inference, not by engine.
+<p align="center"><strong>Financial memory for agents.</strong></p>
 
-Financial memory for agents.
+<p align="center">
+  Append-only ledger • Plain-English policy • Agent-native accounting CLI
+</p>
 
 Clawbooks is an append-only ledger, a plain-English accounting policy, and a CLI.
 Your agent reads the data, reads the policy, and does the accounting.
