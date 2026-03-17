@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="./assets/logo.svg" alt="clawbooks" width="760">
+  <img src="./logo.png" alt="clawbooks logo" width="180" align="center">
 </p>
+
+<h1 align="center">clawbooks</h1>
 
 <p align="center"><strong>Financial memory for agents.</strong></p>
 
-<p align="center">
-  Append-only ledger • Plain-English policy • Agent-native accounting CLI
-</p>
+<p align="center">Append-only ledger • Plain-English policy • Agent-native accounting CLI</p>
 
 Clawbooks is an append-only ledger, a plain-English accounting policy, and a CLI.
 Your agent reads the data, reads the policy, and does the accounting.
