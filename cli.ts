@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import {
   computeId,
   readAll,
   filter,
   append,
   hashLine,
+  rewrite,
   latestSnapshot,
   type LedgerEvent,
 } from "./ledger.js";
@@ -825,6 +826,278 @@ function cmdAssets(args: string[]) {
   }, null, 2));
 }
 
+function cmdCompact(args: string[]) {
+  const f = flags(args);
+  const { before } = periodFromArgs(args);
+
+  if (!before) {
+    console.error("Usage: clawbooks compact <period> or --before <date>");
+    console.error("  Moves events before the cutoff to an archive file and saves a snapshot.");
+    console.error("  Example: clawbooks compact 2025-12");
+    process.exit(1);
+  }
+
+  const all = readAll(LEDGER);
+  const keep = all.filter((e) => e.ts > before);
+  const archive = all.filter((e) => e.ts <= before);
+
+  if (archive.length === 0) {
+    console.log(JSON.stringify({ compacted: false, reason: "no events before cutoff" }));
+    return;
+  }
+
+  // Build snapshot of archived events
+  const balances: Record<string, number> = {};
+  const byCategory: Record<string, number> = {};
+  const pnl: Record<string, { income: number; expenses: number; tax: number; net: number }> = {};
+  let eventCount = 0;
+
+  for (const e of archive) {
+    if (META_TYPES.has(e.type)) continue;
+    const amount = Number(e.data.amount);
+    if (isNaN(amount)) continue;
+    eventCount++;
+    const currency = String(e.data.currency ?? "UNKNOWN");
+    const category = String(e.data.category ?? e.type);
+    balances[currency] = round2((balances[currency] ?? 0) + amount);
+    byCategory[category] = round2((byCategory[category] ?? 0) + amount);
+    if (!pnl[currency]) pnl[currency] = { income: 0, expenses: 0, tax: 0, net: 0 };
+    if (e.type === "income") pnl[currency].income = round2(pnl[currency].income + amount);
+    else if (e.type === "tax_payment") pnl[currency].tax = round2(pnl[currency].tax + amount);
+    else if (OUTFLOW_TYPES.has(e.type)) pnl[currency].expenses = round2(pnl[currency].expenses + amount);
+    pnl[currency].net = round2(pnl[currency].net + amount);
+  }
+
+  const snapshotData = {
+    period: { after: "all", before },
+    event_count: eventCount,
+    balances,
+    by_category: byCategory,
+    pnl,
+    compacted_from: archive.length,
+  };
+
+  const ts = before;
+  const snapshotEvent: LedgerEvent = {
+    ts,
+    source: "clawbooks:compact",
+    type: "snapshot",
+    data: snapshotData,
+    id: computeId(snapshotData as unknown as Record<string, unknown>, {
+      source: "clawbooks:compact", type: "snapshot", ts,
+    }),
+    prev: "",
+  };
+
+  // Write archive
+  const archivePath = f.archive ?? LEDGER.replace(".jsonl", `-archive-${before.slice(0, 10)}.jsonl`);
+  rewrite(archivePath, archive);
+
+  // Rewrite main ledger: snapshot + remaining events
+  rewrite(LEDGER, [snapshotEvent, ...keep]);
+
+  console.log(JSON.stringify({
+    compacted: true,
+    archived: archive.length,
+    archive_path: archivePath,
+    snapshot_id: snapshotEvent.id,
+    remaining: keep.length + 1,
+  }, null, 2));
+}
+
+function csvEscape(val: string): string {
+  if (val.includes(",") || val.includes('"') || val.includes("\n")) {
+    return '"' + val.replace(/"/g, '""') + '"';
+  }
+  return val;
+}
+
+function cmdPack(args: string[]) {
+  const f = flags(args);
+  const { after, before } = periodFromArgs(args);
+  const outDir = f.out ?? `./audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`;
+  const all = readAll(LEDGER);
+  const events = filter(all, { after, before, source: f.source });
+
+  mkdirSync(outDir, { recursive: true });
+
+  // --- general_ledger.csv ---
+  const glHeader = "date,source,type,category,description,amount,currency,confidence,id";
+  const glRows = events
+    .filter((e) => !META_TYPES.has(e.type))
+    .map((e) => [
+      e.ts.slice(0, 10),
+      csvEscape(e.source),
+      e.type,
+      csvEscape(String(e.data.category ?? "")),
+      csvEscape(String(e.data.description ?? "")),
+      String(e.data.amount ?? ""),
+      String(e.data.currency ?? ""),
+      String(e.data.confidence ?? ""),
+      e.id,
+    ].join(","));
+  writeFileSync(`${outDir}/general_ledger.csv`, [glHeader, ...glRows].join("\n") + "\n", "utf-8");
+
+  // --- reclassifications.csv ---
+  const reclassEvents = all.filter((e) => e.type === "reclassify");
+  if (reclassEvents.length > 0) {
+    const rcHeader = "date,original_id,new_category,new_type,reason";
+    const rcRows = reclassEvents.map((e) => [
+      e.ts.slice(0, 10),
+      String(e.data.original_id ?? ""),
+      csvEscape(String(e.data.new_category ?? "")),
+      csvEscape(String(e.data.new_type ?? "")),
+      csvEscape(String(e.data.reason ?? "")),
+    ].join(","));
+    writeFileSync(`${outDir}/reclassifications.csv`, [rcHeader, ...rcRows].join("\n") + "\n", "utf-8");
+  }
+
+  // --- summary.json ---
+  // Build reclassification map
+  const reclassifyMap: Record<string, string> = {};
+  for (const e of all) {
+    if (e.type === "reclassify" && e.data.original_id && e.data.new_category) {
+      reclassifyMap[String(e.data.original_id)] = String(e.data.new_category);
+    }
+  }
+
+  const byType: Record<string, { count: number; total: number }> = {};
+  const byCategory: Record<string, { count: number; total: number }> = {};
+  const byCurrency: Record<string, { count: number; total: number }> = {};
+  let inflows = 0, outflows = 0;
+
+  for (const e of events) {
+    if (META_TYPES.has(e.type)) continue;
+    const amount = Number(e.data.amount);
+    if (isNaN(amount)) continue;
+    const type = e.type;
+    const category = reclassifyMap[e.id] ?? String(e.data.category ?? e.type);
+    const currency = String(e.data.currency ?? "UNKNOWN");
+    if (!byType[type]) byType[type] = { count: 0, total: 0 };
+    byType[type].count++; byType[type].total = round2(byType[type].total + amount);
+    if (!byCategory[category]) byCategory[category] = { count: 0, total: 0 };
+    byCategory[category].count++; byCategory[category].total = round2(byCategory[category].total + amount);
+    if (!byCurrency[currency]) byCurrency[currency] = { count: 0, total: 0 };
+    byCurrency[currency].count++; byCurrency[currency].total = round2(byCurrency[currency].total + amount);
+    if (amount > 0) inflows = round2(inflows + amount);
+    else outflows = round2(outflows + amount);
+  }
+
+  writeFileSync(`${outDir}/summary.json`, JSON.stringify({
+    period: { after: after ?? "all", before: before ?? "now" },
+    by_type: byType,
+    by_category: byCategory,
+    by_currency: byCurrency,
+    cash_flow: { inflows, outflows, net: round2(inflows + outflows) },
+  }, null, 2) + "\n", "utf-8");
+
+  // --- asset_register.csv ---
+  const capitalizedEvents = all.filter((e) => e.data.capitalize === true);
+  if (capitalizedEvents.length > 0) {
+    const disposals: Record<string, LedgerEvent> = {};
+    const writeOffsMap: Record<string, LedgerEvent> = {};
+    const impairmentsMap: Record<string, LedgerEvent[]> = {};
+    for (const e of all) {
+      const aid = String(e.data.asset_id ?? "");
+      if (!aid) continue;
+      if (e.type === "disposal") disposals[aid] = e;
+      else if (e.type === "write_off") writeOffsMap[aid] = e;
+      else if (e.type === "impairment") {
+        if (!impairmentsMap[aid]) impairmentsMap[aid] = [];
+        impairmentsMap[aid].push(e);
+      }
+    }
+
+    const asOf = before ?? new Date().toISOString();
+    const defaultLife = 36;
+    const arHeader = "date,description,category,cost,currency,useful_life,monthly_dep,months_elapsed,acc_dep,impairment,nbv,status,proceeds,gain_loss,id";
+    const arRows = capitalizedEvents.map((e) => {
+      const amount = Math.abs(Number(e.data.amount));
+      const lifeMonths = Number(e.data.useful_life_months) || defaultLife;
+      const purchaseDate = new Date(e.ts);
+      const reportDate = new Date(asOf);
+      const monthsElapsed = Math.max(0,
+        (reportDate.getFullYear() - purchaseDate.getFullYear()) * 12 +
+        (reportDate.getMonth() - purchaseDate.getMonth()));
+      const monthlyDep = round2(amount / lifeMonths);
+      const accDep = round2(Math.min(amount, monthlyDep * monthsElapsed));
+      let impTotal = 0;
+      if (impairmentsMap[e.id]) {
+        for (const imp of impairmentsMap[e.id]) {
+          impTotal = round2(impTotal + Math.abs(Number(imp.data.impairment_amount) || 0));
+        }
+      }
+      const nbv = round2(Math.max(0, amount - accDep - impTotal));
+      let status = "active";
+      let proceeds = "";
+      let gainLoss = "";
+      if (disposals[e.id]) {
+        status = "disposed";
+        const p = Number(disposals[e.id].data.proceeds) || 0;
+        proceeds = String(p);
+        gainLoss = String(round2(p - nbv));
+      } else if (writeOffsMap[e.id]) {
+        status = "written_off";
+        gainLoss = String(round2(-nbv));
+      }
+      return [
+        e.ts.slice(0, 10),
+        csvEscape(String(e.data.description ?? "")),
+        csvEscape(String(e.data.category ?? "")),
+        String(amount),
+        String(e.data.currency ?? ""),
+        String(lifeMonths),
+        String(monthlyDep),
+        String(Math.min(monthsElapsed, lifeMonths)),
+        String(accDep),
+        String(impTotal),
+        status === "active" ? String(nbv) : "0",
+        status,
+        proceeds,
+        gainLoss,
+        e.id,
+      ].join(",");
+    });
+    writeFileSync(`${outDir}/asset_register.csv`, [arHeader, ...arRows].join("\n") + "\n", "utf-8");
+  }
+
+  // --- verify.json ---
+  const hash = createHash("sha256").update(events.map((e) => e.id).join(",")).digest("hex");
+  let debits = 0, credits = 0;
+  const issues: string[] = [];
+  for (const e of events) {
+    const amount = Number(e.data.amount);
+    if (e.data.amount !== undefined && !isNaN(amount)) {
+      if (amount < 0) debits = round2(debits + amount);
+      else credits = round2(credits + amount);
+      if (OUTFLOW_TYPES.has(e.type) && amount > 0) issues.push(`${e.id}: outflow "${e.type}" positive ${amount}`);
+      if (INFLOW_TYPES.has(e.type) && amount < 0) issues.push(`${e.id}: inflow "${e.type}" negative ${amount}`);
+    }
+  }
+  writeFileSync(`${outDir}/verify.json`, JSON.stringify({
+    event_count: events.length, debits, credits, hash, issues,
+    generated: new Date().toISOString(),
+  }, null, 2) + "\n", "utf-8");
+
+  // --- policy.md ---
+  if (existsSync(POLICY)) {
+    writeFileSync(`${outDir}/policy.md`, readFileSync(POLICY, "utf-8"), "utf-8");
+  }
+
+  // Summary output
+  const files = ["general_ledger.csv", "summary.json", "verify.json"];
+  if (reclassEvents.length > 0) files.push("reclassifications.csv");
+  if (capitalizedEvents.length > 0) files.push("asset_register.csv");
+  if (existsSync(POLICY)) files.push("policy.md");
+
+  console.log(JSON.stringify({
+    pack: outDir,
+    period: { after: after ?? "all", before: before ?? "now" },
+    events: events.length,
+    files,
+  }, null, 2));
+}
+
 // --- Help ---
 
 const HELP = `clawbooks — accounting by inference, not by engine.
@@ -846,6 +1119,9 @@ Analysis commands:
   snapshot  [period] [--save]              Compute period snapshot (balances, P&L)
   assets    [--category C] [--life N] [--as-of DATE]
                                            Asset register (capitalize-flag based) with depreciation
+  compact   <period> [--archive PATH]     Archive old events, save snapshot, shrink ledger
+  pack      [period] [--source S] [--out DIR]
+                                           Generate audit pack (CSVs + JSON + policy)
 
 Common flags:
   --after  <ISO date>         Events after this date
@@ -892,6 +1168,8 @@ Examples:
   clawbooks summary 2026-03
   clawbooks snapshot 2026-03 --save
   clawbooks assets --as-of 2026-03-31
+  clawbooks compact 2025-12
+  clawbooks pack 2026-03 --out ./march-pack
 
 Agent workflow:
   1. Agent runs: clawbooks context 2026-03
@@ -920,5 +1198,7 @@ switch (cmd) {
   case "summary":   cmdSummary(args); break;
   case "snapshot":  cmdSnapshot(args); break;
   case "assets":    cmdAssets(args); break;
+  case "compact":   cmdCompact(args); break;
+  case "pack":      cmdPack(args); break;
   default:          console.log(HELP);
 }

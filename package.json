@@ -1,6 +1,6 @@
 {
   "name": "clawbooks",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Accounting by inference, not by engine. Zero dependencies.",
   "type": "module",
   "repository": {

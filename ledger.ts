@@ -67,6 +67,18 @@ export function append(path: string, event: LedgerEvent): boolean {
   return true;
 }
 
+export function rewrite(path: string, events: LedgerEvent[]): void {
+  let prev = "genesis";
+  const lines: string[] = [];
+  for (const e of events) {
+    e.prev = prev;
+    const line = JSON.stringify(e);
+    prev = hashLine(line);
+    lines.push(line);
+  }
+  writeFileSync(path, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8");
+}
+
 export function latestSnapshot(events: LedgerEvent[], before?: string): LedgerEvent | null {
   let snapshots = events.filter((e) => e.type === "snapshot");
   if (before) snapshots = snapshots.filter((e) => e.ts <= before);

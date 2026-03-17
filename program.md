@@ -113,12 +113,13 @@ Reduces carrying value by the impairment amount. Multiple impairments can accumu
 
 When asked for a P&L, tax summary, balance, etc.:
 
-1. Run `clawbooks summary <period>` for pre-computed aggregates
+1. **Start with `summary`**, not `context`. `clawbooks summary <period>` gives you pre-computed aggregates without loading every event into context.
 2. Map the output to the requested report:
    - **P&L**: `by_type` + `by_category` → Revenue - OpEx = Gross Profit - Tax = Net
    - **Balance Sheet**: `cash_flow.net` + opening balance (from snapshot or opening_balance events) → Assets. Capitalized assets from `clawbooks assets`. Equity = Assets - Liabilities
    - **Cash Flow Statement**: Map categories to Operating/Investing/Financing per policy
-3. For details or edge cases, also run `clawbooks context <period>` and reason over raw events
+3. Only use `clawbooks context <period>` when you need to drill into individual events — e.g., investigating a specific transaction, answering "what was that $500 charge?", or debugging a reconciliation mismatch.
+4. For large ledgers, use `clawbooks pack <period>` to generate a full audit pack (CSVs + JSON) that you or an accountant can review outside the agent.
 
 ## Reconciliation workflow
 
@@ -159,6 +160,42 @@ clawbooks snapshot 2026-03          # compute and print (no save)
 
 The snapshot includes balances by currency, totals by category, and P&L by currency.
 
+## Compacting the ledger
+
+When the ledger grows large (thousands of events), compact old periods into an archive:
+
+```bash
+clawbooks compact 2025-12
+```
+
+This:
+1. Saves a snapshot summarizing all events up to the cutoff
+2. Moves those events to `ledger-archive-2025-12-31.jsonl`
+3. Rewrites the main ledger with just the snapshot + newer events
+
+The archive file is a complete, hash-chained ledger — it can be re-read for audits. The main ledger stays small for fast context loading.
+
+Compact aggressively for busy ledgers. Monthly or quarterly compaction keeps context manageable.
+
+## Audit packs
+
+Generate a folder of CSVs and JSON for accountants, auditors, or your own review:
+
+```bash
+clawbooks pack 2026-03                      # pack a single month
+clawbooks pack 2026-01/2026-12-31 --out ./annual-pack   # pack a full year
+```
+
+The pack includes:
+- `general_ledger.csv` — every transaction with date, source, type, category, description, amount, currency, confidence, id
+- `summary.json` — aggregates by type, category, currency, and cash flow
+- `asset_register.csv` — capitalized assets with depreciation, disposal, write-off status (if any)
+- `reclassifications.csv` — all reclassification events (if any)
+- `verify.json` — integrity hash, debit/credit totals, issues
+- `policy.md` — copy of the accounting policy applied
+
+These files are assistive — they give the accountant standard-format data to work with. The agent can also read them back to answer questions.
+
 ## Quick reference
 
 ```
@@ -177,7 +214,22 @@ clawbooks summary [period]          # pre-computed aggregates for reports
 clawbooks snapshot [period] [--save] # compute period snapshot (balances, P&L)
 clawbooks assets [--category C] [--life N] [--as-of DATE]
                                      # asset register (capitalize-flag based)
+clawbooks compact <period>           # archive old events, shrink ledger
+clawbooks pack [period] [--out DIR]  # generate audit pack (CSVs + JSON)
 ```
+
+## Improving the policy
+
+The accounting policy (`policy.md`) should improve over time as you process more data. After classification review cycles:
+
+1. Run `clawbooks review` to see reclassifications and patterns
+2. If you notice repeated corrections (e.g., "GITHUB" always gets reclassified from `office_supplies` to `software`), update `policy.md` with the new rule
+3. Add the rule to the appropriate section (expense classification, source-specific rules, etc.)
+4. Be specific — "GitHub charges are software subscriptions" is better than "tech charges are software"
+
+The goal is that each import gets more accurate as the policy captures learned patterns. The agent should proactively suggest policy updates when it sees recurring reclassifications, but should not update the policy without the user's awareness.
+
+When updating the policy, keep it plain english. The policy is read by the agent on every `context` call — it should be clear, concise, and actionable.
 
 ## Idempotent imports
 
