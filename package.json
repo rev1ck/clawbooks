@@ -1,15 +1,47 @@
 {
   "name": "clawbooks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Accounting by inference, not by engine. Zero dependencies.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rev1ck/clawbooks.git"
+  },
+  "homepage": "https://github.com/rev1ck/clawbooks#readme",
+  "bugs": {
+    "url": "https://github.com/rev1ck/clawbooks/issues"
+  },
+  "keywords": [
+    "accounting",
+    "ledger",
+    "cli",
+    "bookkeeping",
+    "finance",
+    "llm"
+  ],
   "bin": {
-    "clawbooks": "./build/cli.js"
+    "clawbooks": "build/cli.js"
   },
   "scripts": {
-    "build": "tsc && chmod 755 build/cli.js"
+    "build": "tsc && chmod 755 build/cli.js",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
+    "scoped:prepare": "npm run build && node scripts/prepare-scoped-package.mjs",
+    "scoped:pack:dry-run": "npm run scoped:prepare && node scripts/prepare-scoped-package.mjs --pack --dry-run"
   },
-  "files": ["build"],
+  "files": [
+    "build",
+    "program.md",
+    "policy.md.example",
+    "policy-simple.md.example",
+    "policy-complex.md.example"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",

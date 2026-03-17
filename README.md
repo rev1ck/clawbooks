@@ -11,12 +11,32 @@ No rules engine. No SDK. No framework.
 ## Setup
 
 ```bash
-git clone https://github.com/yourname/clawbooks.git
+git clone https://github.com/rev1ck/clawbooks.git
 cd clawbooks
 npm install
 npm run build
 cp policy.md.example policy.md   # edit with your own accounting rules
 ```
+
+## Install
+
+```bash
+npm install -g clawbooks
+clawbooks --help
+cp policy.md.example policy.md
+```
+
+## Scoped Package Readiness
+
+The primary package should stay `clawbooks` for the clean install path.
+If you later want a brand-owned scoped companion package, the repo can stage `@clawbooks/cli` without renaming the live package:
+
+```bash
+npm run scoped:prepare
+npm run scoped:pack:dry-run
+```
+
+This writes a temporary scoped package into `.dist/scoped-cli` for inspection or future publish work.
 
 ## How it works
 
@@ -121,6 +141,8 @@ Point your agent at `program.md` for instructions on how to use clawbooks. For e
 - **Claude Code** — add to your `CLAUDE.md`: `Read program.md in the clawbooks directory for financial record-keeping instructions.`
 - **Codex** — add to your `AGENTS.md` or system prompt with the same pointer
 - **Any agent** — any agent that can shell out can use clawbooks. The CLI outputs structured text. The agent reads it and reasons.
+
+The npm package includes `program.md` plus all policy examples, so this workflow also works from a global install.
 
 ## Files
 
