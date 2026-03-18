@@ -266,6 +266,7 @@ Clawbooks stores its data in a `.books/` directory:
 
 ```bash
 clawbooks init                         # creates .books/ in CWD
+clawbooks init --list-examples         # show bundled policy examples
 clawbooks init --books .books-personal # creates named books dir
 clawbooks init --example simple        # use the cash-basis example
 clawbooks init --example complex       # use the accrual/trading example
@@ -323,16 +324,31 @@ There are no cross-entity CLI commands — the agent handles inter-entity reason
 For inter-entity transactions (e.g., owner pays business expense from personal account),
 record one event in each ledger linked by `data.ref`.
 
+### Global install ergonomics
+
+For a global npm install, recommend one of these patterns:
+- Project-local books: `.books/` at the repo or client root
+- Home-managed books: `~/.clawbooks/<entity>/` for each entity
+
+Use `clawbooks where` before major imports or reporting runs to confirm:
+- which books directory resolved
+- which ledger path will be read or written
+- which policy path the agent should inspect
+- which resolution rule won
+
 ## Quick reference
 
 ```
 clawbooks init [--books DIR] [--example NAME]
                                      # create .books/ with ledger + seeded policy
+clawbooks where                      # show resolved books, ledger, and policy paths
 clawbooks record <json>             # append one event
 clawbooks batch                     # append JSONL from stdin
 clawbooks log [--last N]            # view recent events
 clawbooks context [period]          # load policy + events for reasoning
+clawbooks documents [period]        # neutral settlement and aging view
 clawbooks policy                    # print policy.md
+clawbooks policy lint               # advisory policy completeness check
 clawbooks stats                     # ledger overview
 clawbooks verify [period]           # integrity + chain + balance check + duplicates
 clawbooks verify --balance N        # cross-check closing balance against period movement
@@ -342,6 +358,7 @@ clawbooks reconcile [period] -S     # compare expected vs actual totals
 clawbooks reconcile -S --gaps       # also detect date gaps >7 days
 clawbooks review [period]           # show items needing classification review
 clawbooks summary [period]          # aggregates + movement summary + report sections
+                                     # plus neutral settlement / candidate summaries
 clawbooks snapshot [period] [--save] # compute period snapshot (balances, movement summary, sections)
 clawbooks assets [--category C] [--life N] [--as-of DATE]
                                      # asset register (capitalize-flag based)

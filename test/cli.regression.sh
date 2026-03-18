@@ -121,6 +121,12 @@ grep -q "already exists" "$BOOKS_ROOT/init-output2.txt" || { echo "FAIL: re-init
 test -d "$BOOKS_ROOT/.books-personal" || { echo "FAIL: init --books should create named dir"; exit 1; }
 test -f "$BOOKS_ROOT/.books-personal/ledger.jsonl" || { echo "FAIL: init --books should create ledger"; exit 1; }
 
+# Test 3b: init --list-examples shows bundled examples
+(cd "$BOOKS_ROOT" && $CLI init --list-examples 2>&1) > "$BOOKS_ROOT/examples.json"
+grep -q '"name": "default"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include default"; exit 1; }
+grep -q '"name": "simple"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include simple"; exit 1; }
+grep -q '"name": "complex"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include complex"; exit 1; }
+
 # Test 4: init --example simple selects the cash-basis example
 SIMPLE_DIR="$(mktemp -d)"
 (cd "$SIMPLE_DIR" && $CLI init --example simple 2>&1) > "$SIMPLE_DIR/init-simple.txt"
@@ -158,6 +164,13 @@ if (cd "$EMPTY_DIR2" && $CLI summary 2026-03 2>/dev/null); then
 fi
 rm -rf "$EMPTY_DIR2"
 
+# Test 8b: where works before books exist
+EMPTY_DIR3="$(mktemp -d)"
+WHERE_JSON="$EMPTY_DIR3/where.json"
+(cd "$EMPTY_DIR3" && $CLI where 2>&1) > "$WHERE_JSON"
+grep -q '"resolution": "default:.books"' "$WHERE_JSON" || { echo "FAIL: where should report default resolution"; exit 1; }
+rm -rf "$EMPTY_DIR3"
+
 # Test 9: --books flag works for commands
 (cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"test","type":"income","data":{"amount":200,"currency":"USD"}}' 2>&1) > /dev/null
 BOOKS_STATS="$BOOKS_ROOT/books-stats.json"
@@ -191,5 +204,61 @@ rm -rf "$BARE_DIR"
 (cd "$BOOKS_ROOT" && $CLI --books .books pack 2>&1) > /dev/null
 PACK_DIRS=$(ls -d "$BOOKS_ROOT/.books/audit-pack-"* 2>/dev/null | wc -l)
 test "$PACK_DIRS" -ge 1 || { echo "FAIL: pack should output to books dir by default"; exit 1; }
+
+# Test 14: policy lint + documents + neutral summary/context fields
+DOCS_ROOT="$(mktemp -d)"
+mkdir -p "$DOCS_ROOT/.books"
+cat > "$DOCS_ROOT/.books/policy.md" <<'EOF'
+# Accounting policy
+
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Doc Test LLC
+reporting:
+  basis: accrual
+  base_currency: USD
+```
+
+## Entity
+
+Test entity.
+EOF
+
+cat > "$DOCS_ROOT/.books/ledger.jsonl" <<'EOF'
+{"ts":"2026-03-01T00:00:00.000Z","source":"manual","type":"invoice","data":{"amount":500,"currency":"USD","direction":"issued","invoice_id":"INV-001","counterparty":"acme","due_date":"2026-03-15","confidence":"clear"},"id":"doc1","prev":"genesis"}
+{"ts":"2026-03-05T00:00:00.000Z","source":"bank","type":"income","data":{"amount":200,"currency":"USD","invoice_id":"INV-001","description":"Partial payment","confidence":"clear"},"id":"pay1","prev":"x"}
+{"ts":"2026-03-02T00:00:00.000Z","source":"manual","type":"bill","data":{"amount":300,"currency":"USD","direction":"received","invoice_id":"BILL-001","counterparty":"aws","due_date":"2026-03-20","confidence":"clear"},"id":"doc2","prev":"y"}
+{"ts":"2026-03-18T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-300,"currency":"USD","invoice_id":"BILL-001","description":"Bill payment","confidence":"clear"},"id":"pay2","prev":"z"}
+{"ts":"2026-03-10T00:00:00.000Z","source":"manual","type":"invoice","data":{"amount":120,"currency":"USD","direction":"issued","counterparty":"beta","confidence":"clear"},"id":"doc3","prev":"q"}
+{"ts":"2026-03-12T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":75,"currency":"USD","category":"software","confidence":"unclear"},"id":"rev1","prev":"w"}
+EOF
+
+POLICY_LINT="$DOCS_ROOT/policy-lint.json"
+(cd "$DOCS_ROOT" && $CLI policy lint 2>&1) > "$POLICY_LINT"
+grep -q '"status": "warn"' "$POLICY_LINT" || { echo "FAIL: policy lint should warn on incomplete policy"; exit 1; }
+grep -q 'Revenue recognition' "$POLICY_LINT" || { echo "FAIL: policy lint should suggest missing sections"; exit 1; }
+
+DOCUMENTS_JSON="$DOCS_ROOT/documents.json"
+(cd "$DOCS_ROOT" && $CLI documents 2026-03 --as-of 2026-03-31T00:00:00.000Z 2>&1) > "$DOCUMENTS_JSON"
+grep -q '"partial": 1' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show one partial settlement"; exit 1; }
+grep -q '"settled": 1' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show one settled document"; exit 1; }
+grep -q '"missing_invoice_id_documents": 1' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show one missing invoice_id"; exit 1; }
+grep -q '"invoice_id": "INV-001"' "$DOCUMENTS_JSON" || { echo "FAIL: documents should include INV-001"; exit 1; }
+grep -q '"open_balance": 300' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show open balance for partial invoice"; exit 1; }
+
+SUMMARY_DOCS="$DOCS_ROOT/summary-docs.json"
+(cd "$DOCS_ROOT" && $CLI summary 2026-03 2>&1) > "$SUMMARY_DOCS"
+grep -q '"settlement_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include settlement_summary"; exit 1; }
+grep -q '"receivable_candidates"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include receivable_candidates"; exit 1; }
+grep -q '"review_materiality"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include review_materiality"; exit 1; }
+
+CONTEXT_DOCS="$DOCS_ROOT/context-docs.txt"
+(cd "$DOCS_ROOT" && $CLI context 2026-03 2>&1) > "$CONTEXT_DOCS"
+grep -q '"settlement_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should include settlement_summary"; exit 1; }
+grep -q '"top_open_documents"' "$CONTEXT_DOCS" || { echo "FAIL: context should include top_open_documents"; exit 1; }
+grep -q '"review_materiality"' "$CONTEXT_DOCS" || { echo "FAIL: context should include review_materiality"; exit 1; }
+rm -rf "$DOCS_ROOT"
 
 echo "books-resolution tests: ok"

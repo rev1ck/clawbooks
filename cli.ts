@@ -84,25 +84,36 @@ function resolvePolicySeed(example?: string): { source: "example" | "fallback"; 
   return { source: "fallback", exampleName: requested ?? "starter" };
 }
 
-function resolveBooks(booksFlag?: string): { ledger: string; policy: string; booksDir: string | null } {
+function resolveBooks(booksFlag?: string): {
+  ledger: string;
+  policy: string;
+  booksDir: string | null;
+  resolution:
+    | "env:file"
+    | "env:books"
+    | "flag:books"
+    | "walkup:.books"
+    | "cwd:bare"
+    | "default:.books";
+} {
   // 1. Explicit env vars for individual files — highest priority
   if (process.env.CLAWBOOKS_LEDGER || process.env.CLAWBOOKS_POLICY) {
     const ledger = process.env.CLAWBOOKS_LEDGER ?? "./ledger.jsonl";
     const policy = process.env.CLAWBOOKS_POLICY ?? "./policy.md";
-    return { ledger, policy, booksDir: null };
+    return { ledger, policy, booksDir: null, resolution: "env:file" };
   }
 
   // 2. CLAWBOOKS_BOOKS env var
   const booksEnv = process.env.CLAWBOOKS_BOOKS;
   if (booksEnv) {
     const dir = resolve(booksEnv);
-    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir };
+    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir, resolution: "env:books" };
   }
 
   // 3. --books flag
   if (booksFlag) {
     const dir = resolve(booksFlag);
-    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir };
+    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir, resolution: "flag:books" };
   }
 
   // 4. Walk up from CWD looking for .books/ containing ledger.jsonl or policy.md
@@ -110,7 +121,12 @@ function resolveBooks(booksFlag?: string): { ledger: string; policy: string; boo
   while (true) {
     const candidate = join(cur, ".books");
     if (existsSync(join(candidate, "ledger.jsonl")) || existsSync(join(candidate, "policy.md"))) {
-      return { ledger: join(candidate, "ledger.jsonl"), policy: join(candidate, "policy.md"), booksDir: candidate };
+      return {
+        ledger: join(candidate, "ledger.jsonl"),
+        policy: join(candidate, "policy.md"),
+        booksDir: candidate,
+        resolution: "walkup:.books",
+      };
     }
     const parent = dirname(cur);
     if (parent === cur) break;
@@ -119,12 +135,12 @@ function resolveBooks(booksFlag?: string): { ledger: string; policy: string; boo
 
   // 5. Bare files in CWD (backward compat)
   if (existsSync("./ledger.jsonl")) {
-    return { ledger: "./ledger.jsonl", policy: "./policy.md", booksDir: null };
+    return { ledger: "./ledger.jsonl", policy: "./policy.md", booksDir: null, resolution: "cwd:bare" };
   }
 
   // 6. Nothing found — return default .books/ (will be created on write, error on read)
   const defaultDir = resolve(".books");
-  return { ledger: join(defaultDir, "ledger.jsonl"), policy: join(defaultDir, "policy.md"), booksDir: defaultDir };
+  return { ledger: join(defaultDir, "ledger.jsonl"), policy: join(defaultDir, "policy.md"), booksDir: defaultDir, resolution: "default:.books" };
 }
 
 function ensureBooksDir(booksDir: string | null, ledger: string, policy: string): void {
@@ -169,7 +185,7 @@ function extractBooksFlag(argv: string[]): { booksFlag?: string; rest: string[] 
 }
 
 const { booksFlag, rest: argv } = extractBooksFlag(process.argv.slice(2));
-const { ledger: LEDGER, policy: POLICY, booksDir: BOOKS_DIR } = resolveBooks(booksFlag);
+const { ledger: LEDGER, policy: POLICY, booksDir: BOOKS_DIR, resolution: BOOKS_RESOLUTION } = resolveBooks(booksFlag);
 
 const OUTFLOW_TYPES = new Set([
   "expense", "tax_payment", "owner_draw", "fee", "dividend",
@@ -418,10 +434,15 @@ function buildCompactContextSummary(summary: ReturnType<typeof buildContextSumma
     movement_summary: summary.movement_summary,
     cash_flow: summary.cash_flow,
     report_totals: summary.report_totals,
+    settlement_summary: summary.settlement_summary,
+    receivable_candidates: summary.receivable_candidates,
+    payable_candidates: summary.payable_candidates,
+    top_open_documents: summary.top_open_documents,
     top_operating_expenses: topCategoryEntries(summary.report_sections.operating_expenses),
     top_capex: topCategoryEntries(summary.report_sections.capex, 3),
     top_transfers: topCategoryEntries(summary.report_sections.internal_transfers, 3),
     review: summary.review,
+    review_materiality: summary.review_materiality,
   };
 }
 
@@ -451,6 +472,282 @@ function reviewCounts(events: LedgerEvent[], all: LedgerEvent[]): Record<string,
   }
 
   return counts;
+}
+
+function unresolvedReviewItems(events: LedgerEvent[], all: LedgerEvent[]): Array<{
+  id: string;
+  ts: string;
+  source: string;
+  type: string;
+  category: string;
+  confidence: string;
+  amount: number;
+  magnitude: number;
+}> {
+  const reclassified = new Set(
+    all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
+  );
+
+  return events
+    .filter((e) => e.type !== "reclassify" && e.type !== "snapshot" && !reclassified.has(e.id))
+    .map((e) => {
+      const amount = Number(e.data.amount);
+      return {
+        id: e.id,
+        ts: e.ts,
+        source: e.source,
+        type: e.type,
+        category: String(e.data.category ?? e.type),
+        confidence: String(e.data.confidence ?? "unset"),
+        amount: isNaN(amount) ? 0 : amount,
+        magnitude: isNaN(amount) ? 0 : Math.abs(amount),
+      };
+    })
+    .filter((e) => e.confidence !== "clear");
+}
+
+function buildReviewMateriality(events: LedgerEvent[], all: LedgerEvent[]) {
+  const totals: Record<string, { count: number; magnitude: number }> = {
+    unclear: { count: 0, magnitude: 0 },
+    inferred: { count: 0, magnitude: 0 },
+    unset: { count: 0, magnitude: 0 },
+  };
+  const items = unresolvedReviewItems(events, all);
+
+  for (const item of items) {
+    if (!totals[item.confidence]) continue;
+    totals[item.confidence].count++;
+    totals[item.confidence].magnitude = round2(totals[item.confidence].magnitude + item.magnitude);
+  }
+
+  return {
+    by_confidence: totals,
+    top_items: items
+      .sort((a, b) => b.magnitude - a.magnitude || a.id.localeCompare(b.id))
+      .slice(0, 5),
+  };
+}
+
+function inferDocumentDirection(event: LedgerEvent): "issued" | "received" | "unknown" {
+  if (event.data.direction === "issued") return "issued";
+  if (event.data.direction === "received") return "received";
+  const amount = signedAmount(event);
+  if (amount === undefined) return "unknown";
+  if (amount > 0) return "issued";
+  if (amount < 0) return "received";
+  return "unknown";
+}
+
+function agingBucket(days: number | null): string {
+  if (days === null) return "no_due_date";
+  if (days < 0) return "not_due";
+  if (days <= 30) return "0_30";
+  if (days <= 60) return "31_60";
+  if (days <= 90) return "61_90";
+  return "90_plus";
+}
+
+function isoDateDiffDays(a: string, b: string): number | null {
+  const da = new Date(a);
+  const db = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return null;
+  return Math.floor((da.getTime() - db.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function buildDocumentSettlementData(events: LedgerEvent[], asOf = new Date().toISOString()) {
+  const documentGroups = new Map<string, {
+    invoice_id: string;
+    direction: "issued" | "received" | "unknown";
+    document_count: number;
+    document_total: number;
+    document_magnitude: number;
+    counterparty: string[];
+    currencies: string[];
+    due_dates: string[];
+    first_document_ts: string;
+    last_document_ts: string;
+    matched_cash_total: number;
+    matched_cash_magnitude: number;
+    matched_cash_count: number;
+    direction_mismatch_cash_total: number;
+  }>();
+  const unmatchedCash = new Map<string, {
+    invoice_id: string;
+    cash_event_count: number;
+    cash_total: number;
+    currencies: string[];
+    sources: string[];
+  }>();
+  const documentsMissingInvoiceId: Array<{
+    id: string;
+    ts: string;
+    type: string;
+    direction: "issued" | "received" | "unknown";
+    amount: number;
+    due_date: string | null;
+    counterparty: string;
+  }> = [];
+
+  for (const e of events) {
+    if (META_TYPES.has(e.type)) continue;
+    const amount = signedAmount(e);
+    if (amount === undefined) continue;
+    if (DOCUMENT_TYPES.has(e.type)) {
+      const invoiceId = String(e.data.invoice_id ?? "").trim();
+      const direction = inferDocumentDirection(e);
+      if (!invoiceId) {
+        documentsMissingInvoiceId.push({
+          id: e.id,
+          ts: e.ts,
+          type: e.type,
+          direction,
+          amount,
+          due_date: e.data.due_date ? String(e.data.due_date) : null,
+          counterparty: String(e.data.counterparty ?? ""),
+        });
+        continue;
+      }
+      if (!documentGroups.has(invoiceId)) {
+        documentGroups.set(invoiceId, {
+          invoice_id: invoiceId,
+          direction,
+          document_count: 0,
+          document_total: 0,
+          document_magnitude: 0,
+          counterparty: [],
+          currencies: [],
+          due_dates: [],
+          first_document_ts: e.ts,
+          last_document_ts: e.ts,
+          matched_cash_total: 0,
+          matched_cash_magnitude: 0,
+          matched_cash_count: 0,
+          direction_mismatch_cash_total: 0,
+        });
+      }
+      const group = documentGroups.get(invoiceId)!;
+      group.document_count++;
+      group.document_total = round2(group.document_total + amount);
+      group.document_magnitude = round2(group.document_magnitude + Math.abs(amount));
+      group.first_document_ts = group.first_document_ts < e.ts ? group.first_document_ts : e.ts;
+      group.last_document_ts = group.last_document_ts > e.ts ? group.last_document_ts : e.ts;
+      const counterparty = String(e.data.counterparty ?? "");
+      if (counterparty && !group.counterparty.includes(counterparty)) group.counterparty.push(counterparty);
+      const currency = String(e.data.currency ?? "");
+      if (currency && !group.currencies.includes(currency)) group.currencies.push(currency);
+      const dueDate = String(e.data.due_date ?? "");
+      if (dueDate && !group.due_dates.includes(dueDate)) group.due_dates.push(dueDate);
+      if (group.direction === "unknown") group.direction = direction;
+      else if (direction !== "unknown" && group.direction !== direction) group.direction = "unknown";
+      continue;
+    }
+
+    const invoiceId = String(e.data.invoice_id ?? "").trim();
+    if (!invoiceId) continue;
+    if (documentGroups.has(invoiceId)) {
+      const group = documentGroups.get(invoiceId)!;
+      const directionMatches =
+        (group.direction === "issued" && amount > 0)
+        || (group.direction === "received" && amount < 0)
+        || (group.direction === "unknown");
+      if (directionMatches) {
+        group.matched_cash_total = round2(group.matched_cash_total + amount);
+        group.matched_cash_magnitude = round2(group.matched_cash_magnitude + Math.abs(amount));
+        group.matched_cash_count++;
+      } else {
+        group.direction_mismatch_cash_total = round2(group.direction_mismatch_cash_total + amount);
+      }
+    } else {
+      if (!unmatchedCash.has(invoiceId)) {
+        unmatchedCash.set(invoiceId, {
+          invoice_id: invoiceId,
+          cash_event_count: 0,
+          cash_total: 0,
+          currencies: [],
+          sources: [],
+        });
+      }
+      const row = unmatchedCash.get(invoiceId)!;
+      row.cash_event_count++;
+      row.cash_total = round2(row.cash_total + amount);
+      const currency = String(e.data.currency ?? "");
+      if (currency && !row.currencies.includes(currency)) row.currencies.push(currency);
+      if (!row.sources.includes(e.source)) row.sources.push(e.source);
+    }
+  }
+
+  const documentsByDirection = {
+    issued: { count: 0, total: 0 },
+    received: { count: 0, total: 0 },
+    unknown: { count: 0, total: 0 },
+  };
+  const settlementSummary = {
+    tracked_documents: 0,
+    missing_invoice_id_documents: documentsMissingInvoiceId.length,
+    unmatched_cash_groups: unmatchedCash.size,
+    open: 0,
+    partial: 0,
+    settled: 0,
+    overpaid: 0,
+  };
+  const receivableCandidates = { count: 0, open_total: 0 };
+  const payableCandidates = { count: 0, open_total: 0 };
+
+  const items = [...documentGroups.values()]
+    .map((group) => {
+      settlementSummary.tracked_documents++;
+      documentsByDirection[group.direction].count++;
+      documentsByDirection[group.direction].total = round2(documentsByDirection[group.direction].total + group.document_magnitude);
+      const dueDate = [...group.due_dates].sort()[0] ?? null;
+      const ageDays = dueDate ? isoDateDiffDays(asOf, dueDate) : null;
+      const openMagnitude = round2(group.document_magnitude - group.matched_cash_magnitude);
+      let status: "open" | "partial" | "settled" | "overpaid";
+      if (group.matched_cash_magnitude === 0) status = "open";
+      else if (openMagnitude > 0) status = "partial";
+      else if (openMagnitude === 0) status = "settled";
+      else status = "overpaid";
+      settlementSummary[status]++;
+      if (group.direction === "issued" && openMagnitude > 0) {
+        receivableCandidates.count++;
+        receivableCandidates.open_total = round2(receivableCandidates.open_total + openMagnitude);
+      }
+      if (group.direction === "received" && openMagnitude > 0) {
+        payableCandidates.count++;
+        payableCandidates.open_total = round2(payableCandidates.open_total + openMagnitude);
+      }
+      return {
+        invoice_id: group.invoice_id,
+        direction: group.direction,
+        document_count: group.document_count,
+        document_total: round2(group.document_total),
+        document_magnitude: round2(group.document_magnitude),
+        matched_cash_total: round2(group.matched_cash_total),
+        matched_cash_magnitude: round2(group.matched_cash_magnitude),
+        open_balance: openMagnitude > 0 ? openMagnitude : 0,
+        overpaid_balance: openMagnitude < 0 ? round2(Math.abs(openMagnitude)) : 0,
+        matched_cash_count: group.matched_cash_count,
+        due_date: dueDate,
+        age_days: ageDays,
+        aging_bucket: agingBucket(ageDays),
+        status,
+        counterparty: group.counterparty,
+        currencies: group.currencies,
+        first_document_ts: group.first_document_ts,
+        last_document_ts: group.last_document_ts,
+        direction_mismatch_cash_total: round2(group.direction_mismatch_cash_total),
+      };
+    })
+    .sort((a, b) => b.open_balance - a.open_balance || a.invoice_id.localeCompare(b.invoice_id));
+
+  return {
+    settlement_summary: settlementSummary,
+    documents_by_direction: documentsByDirection,
+    receivable_candidates: receivableCandidates,
+    payable_candidates: payableCandidates,
+    items,
+    documents_missing_invoice_id: documentsMissingInvoiceId.sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id)),
+    unmatched_cash: [...unmatchedCash.values()].sort((a, b) => Math.abs(b.cash_total) - Math.abs(a.cash_total) || a.invoice_id.localeCompare(b.invoice_id)),
+  };
 }
 
 function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
@@ -506,6 +803,8 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
   const confidence = reviewCounts(events, all);
   const needsReview = confidence.unclear + confidence.inferred + confidence.unset;
   const reclassifiedEventCount = events.filter((e) => reclassifyMap[e.id] !== undefined).length;
+  const settlements = buildDocumentSettlementData(events);
+  const reviewMateriality = buildReviewMateriality(events, all);
 
   return {
     event_count: events.length,
@@ -530,9 +829,15 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
       needs_review: needsReview,
       by_confidence: confidence,
     },
+    review_materiality: reviewMateriality,
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
+    settlement_summary: settlements.settlement_summary,
+    documents_by_direction: settlements.documents_by_direction,
+    receivable_candidates: settlements.receivable_candidates,
+    payable_candidates: settlements.payable_candidates,
+    top_open_documents: settlements.items.slice(0, 5),
   };
 }
 
@@ -794,11 +1099,53 @@ function cmdContext(args: string[]) {
 
 function cmdPolicy(args: string[]) {
   const f = flags(args);
+  const p = positional(args);
+  if (p[0] === "lint") {
+    const text = policyText();
+    const issues: string[] = [];
+    const suggestions: string[] = [];
+    if (!existsSync(POLICY)) {
+      issues.push("No policy file found.");
+    } else {
+      if (!text.includes("```yaml")) issues.push("Missing structured YAML hints block.");
+      if (!/reporting:\s*\n[\s\S]*basis:/m.test(text)) issues.push("Missing reporting.basis hint.");
+      if (!/reporting:\s*\n[\s\S]*base_currency:/m.test(text)) issues.push("Missing reporting.base_currency hint.");
+      if (!/entity:/m.test(text)) issues.push("Missing entity section in structured hints.");
+      if (!/^## Entity$/m.test(text)) suggestions.push("Add a narrative '## Entity' section.");
+      if (!/^## Revenue recognition$/m.test(text)) suggestions.push("Add a '## Revenue recognition' section.");
+      if (!/^## Accounts receivable \/ payable$/m.test(text)) suggestions.push("Add an '## Accounts receivable / payable' section if documents are used.");
+      if (!/^## Reconciliation$/m.test(text)) suggestions.push("Add a '## Reconciliation' section with import checks.");
+    }
+    const status = issues.length === 0 && suggestions.length === 0 ? "ok" : "warn";
+    console.log(JSON.stringify({
+      status,
+      policy_path: POLICY,
+      issues,
+      suggestions,
+    }, null, 2));
+    return;
+  }
   if (f.path === "true") {
     console.log(POLICY);
     return;
   }
   console.log(policyText());
+}
+
+function cmdWhere() {
+  console.log(JSON.stringify({
+    cwd: resolve("."),
+    books_dir: BOOKS_DIR,
+    ledger_path: LEDGER,
+    policy_path: POLICY,
+    resolution: BOOKS_RESOLUTION,
+    exists: {
+      books_dir: BOOKS_DIR ? existsSync(BOOKS_DIR) : false,
+      ledger: existsSync(LEDGER),
+      policy: existsSync(POLICY),
+    },
+    available_examples: availablePolicyExamples(),
+  }, null, 2));
 }
 
 function cmdStats() {
@@ -1125,6 +1472,8 @@ function cmdSummary(args: string[]) {
   let inflows = 0;
   let outflows = 0;
   const reporting = buildReportingSections(events);
+  const settlements = buildDocumentSettlementData(events);
+  const reviewMateriality = buildReviewMateriality(events, all);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -1183,6 +1532,35 @@ function cmdSummary(args: string[]) {
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
+    settlement_summary: settlements.settlement_summary,
+    documents_by_direction: settlements.documents_by_direction,
+    receivable_candidates: settlements.receivable_candidates,
+    payable_candidates: settlements.payable_candidates,
+    top_open_documents: settlements.items.slice(0, 10),
+    review_materiality: reviewMateriality,
+  }, null, 2));
+}
+
+function cmdDocuments(args: string[]) {
+  const f = flags(args);
+  const { after, before } = periodFromArgs(args);
+  const all = readAll(LEDGER);
+  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
+  let data = buildDocumentSettlementData(events, f["as-of"] ?? new Date().toISOString());
+
+  let items = data.items;
+  if (f.status) items = items.filter((item) => item.status === f.status);
+  if (f.direction) items = items.filter((item) => item.direction === f.direction);
+
+  console.log(JSON.stringify({
+    as_of: f["as-of"] ?? new Date().toISOString(),
+    settlement_summary: data.settlement_summary,
+    documents_by_direction: data.documents_by_direction,
+    receivable_candidates: data.receivable_candidates,
+    payable_candidates: data.payable_candidates,
+    documents_missing_invoice_id: data.documents_missing_invoice_id,
+    unmatched_cash: data.unmatched_cash,
+    items,
   }, null, 2));
 }
 
@@ -1666,7 +2044,9 @@ Data commands:
   batch                       Append JSONL events from stdin
   log     [flags]             Print ledger events
   context [period] [flags]    Print compact policy + snapshot + events (use --verbose for full payloads)
-  policy  [--path]            Print policy.md or just the path
+  documents [period] [flags]  Show neutral document settlement and aging views
+  policy  [lint] [--path]     Print policy.md, lint it, or print the path
+  where                       Show resolved books, ledger, and policy paths
   stats                       Ledger summary
 
 Analysis commands:
@@ -1723,6 +2103,7 @@ Global flags:
 
 Init flags:
   --example <name>                  Policy seed: default, simple, complex
+  --list-examples                   Print available policy examples and exit
 
 Environment:
   CLAWBOOKS_BOOKS     Books directory (default: auto-detected .books/)
@@ -1741,7 +2122,9 @@ Bootstrap behavior:
   New books are seeded with a policy example. Edit policy.md to match your entity and jurisdiction.
 
 Examples:
+  clawbooks where
   clawbooks init
+  clawbooks init --list-examples
   clawbooks init --example simple
   clawbooks init --example complex
   clawbooks init --books .books-personal
@@ -1749,6 +2132,8 @@ Examples:
   cat events.jsonl | clawbooks batch
   clawbooks --books .books-personal summary 2026-03
   clawbooks log --last 10 -S stripe
+  clawbooks documents 2026-03 --status partial
+  clawbooks policy lint
   clawbooks context 2026-03 --include-policy
   clawbooks verify 2026-03 --balance 153869.05 --currency USD
   clawbooks pack 2026-03 --out ./march-pack
@@ -1773,6 +2158,16 @@ Agent workflow:
 function cmdInit(args: string[]) {
   const f = flags(args);
   const validExamples = ["default", "simple", "complex"];
+  if (f["list-examples"] === "true") {
+    console.log(JSON.stringify({
+      examples: [
+        { name: "default", description: "General-purpose starter policy", available: existsSync(POLICY_EXAMPLES.default) },
+        { name: "simple", description: "Cash-basis operating business example", available: existsSync(POLICY_EXAMPLES.simple) },
+        { name: "complex", description: "Accrual/trading-heavy example", available: existsSync(POLICY_EXAMPLES.complex) },
+      ],
+    }, null, 2));
+    return;
+  }
   if (f.example && !validExamples.includes(f.example)) {
     console.error(`Unknown policy example "${f.example}". Available examples: ${validExamples.join(", ")}`);
     process.exit(1);
@@ -1823,7 +2218,7 @@ function cmdInit(args: string[]) {
 // --- Dispatch ---
 
 const WRITE_COMMANDS = new Set(["record", "batch", "init", "snapshot", "compact"]);
-const READ_COMMANDS = new Set(["log", "context", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack"]);
+const READ_COMMANDS = new Set(["log", "context", "documents", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack"]);
 
 const [cmd, ...args] = argv;
 
@@ -1845,7 +2240,9 @@ switch (cmd) {
   case "batch":     await cmdBatch(); break;
   case "log":       cmdLog(args); break;
   case "context":   cmdContext(args); break;
+  case "documents": cmdDocuments(args); break;
   case "policy":    cmdPolicy(args); break;
+  case "where":     cmdWhere(); break;
   case "stats":     cmdStats(); break;
   case "verify":    cmdVerify(args); break;
   case "reconcile": cmdReconcile(args); break;

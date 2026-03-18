@@ -169,6 +169,24 @@ clawbooks init --books .books-company --example simple
 clawbooks --books .books-company summary 2026-03
 ```
 
+## Where To Keep `.books/`
+
+Two patterns are supported and worth documenting explicitly:
+
+- Project-local: keep `.books/` at the repo root when the ledger belongs to one codebase or client folder.
+- Home-managed: keep entity books under `~/.clawbooks/<entity>/` when using the global npm install across multiple unrelated entities.
+
+Examples:
+
+```bash
+clawbooks init                          # project-local .books/
+clawbooks init --books ~/.clawbooks/acme
+CLAWBOOKS_BOOKS=~/.clawbooks/acme clawbooks summary 2026-03
+clawbooks where
+```
+
+Use `clawbooks where` to confirm which books directory, ledger, and policy the CLI resolved before importing or reporting.
+
 ## How it works
 
 Clawbooks stores financial events and outputs accounting context.
@@ -178,7 +196,9 @@ The important command is `clawbooks context`: it prints a compact working envelo
 
 ```bash
 # Bootstrap
+clawbooks where
 clawbooks init
+clawbooks init --list-examples
 clawbooks init --example simple
 clawbooks init --example complex
 clawbooks init --books .books-personal
@@ -198,7 +218,10 @@ clawbooks context 2026-03 --verbose
 clawbooks context 2026-03 --include-policy
 clawbooks context --after 2026-01-01
 clawbooks policy
+clawbooks policy lint
 clawbooks policy --path
+clawbooks documents 2026-03
+clawbooks documents 2026-03 --status partial
 
 # Analysis
 clawbooks verify 2026-03                            # integrity + chain + duplicates
@@ -228,7 +251,7 @@ This is the core command. It prints a `context` envelope for the requested perio
 
 - `metadata` explains the requested and effective window, whether a snapshot was used, and what kinds of records are present
 - `instructions` tells the agent how to interpret snapshot plus events
-- `summary` provides a compact management view before the event rows, including movement summary, cash movement, review counts, and top categories
+- `summary` provides a compact management view before the event rows, including movement summary, settlement summary, review counts, and top categories
 - `snapshot` is the starting state, when available
 - `events` contains compact event rows by default; use `--verbose` for full raw records
 
@@ -276,6 +299,19 @@ Apply the events block on top of that snapshot.
 ```
 
 Use `clawbooks context 2026-03 --verbose` when the compact envelope is not enough.
+
+## Policy checks and document views
+
+Use `clawbooks policy lint` for advisory feedback on whether the current policy includes the minimum structured hints and narrative sections the agent will rely on.
+
+Use `clawbooks documents` for neutral settlement views:
+- open documents
+- aging buckets
+- matched vs unmatched by `invoice_id`
+- partial and overpaid status
+- receivable/payable candidates
+
+These are data views only. The CLI does not decide recognition or accounting basis treatment.
 
 ## Importing data
 
