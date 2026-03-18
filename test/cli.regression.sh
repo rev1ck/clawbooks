@@ -93,3 +93,103 @@ assert(contextCompact.includes('"top_operating_expenses"'), "default context sum
 assert(contextVerbose.includes('"by_type"'), "verbose context should include the full internal summary");
 console.log("cli.regression.sh: ok");
 EOF
+
+# --- .books/ directory tests ---
+
+BOOKS_ROOT="$(mktemp -d)"
+BOOKS_CLEANUP() {
+  rm -rf "$BOOKS_ROOT"
+}
+trap BOOKS_CLEANUP EXIT
+
+CLI="node $(pwd)/build/cli.js"
+
+# Test 1: init creates .books/ with ledger and policy
+(cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output.txt"
+test -d "$BOOKS_ROOT/.books" || { echo "FAIL: init should create .books/"; exit 1; }
+test -f "$BOOKS_ROOT/.books/ledger.jsonl" || { echo "FAIL: init should create ledger.jsonl"; exit 1; }
+test -f "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init should create policy.md"; exit 1; }
+grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy should contain usable policy content"; exit 1; }
+grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
+
+# Test 2: init is idempotent
+(cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output2.txt"
+grep -q "already exists" "$BOOKS_ROOT/init-output2.txt" || { echo "FAIL: re-init should say already exists"; exit 1; }
+
+# Test 3: init --books creates named directory
+(cd "$BOOKS_ROOT" && $CLI init --books .books-personal 2>&1) > /dev/null
+test -d "$BOOKS_ROOT/.books-personal" || { echo "FAIL: init --books should create named dir"; exit 1; }
+test -f "$BOOKS_ROOT/.books-personal/ledger.jsonl" || { echo "FAIL: init --books should create ledger"; exit 1; }
+
+# Test 4: init --example simple selects the cash-basis example
+SIMPLE_DIR="$(mktemp -d)"
+(cd "$SIMPLE_DIR" && $CLI init --example simple 2>&1) > "$SIMPLE_DIR/init-simple.txt"
+grep -q "Example Studio LLC" "$SIMPLE_DIR/.books/policy.md" || { echo "FAIL: init --example simple should copy simple policy"; exit 1; }
+grep -q "Policy seed: simple" "$SIMPLE_DIR/init-simple.txt" || { echo "FAIL: init should confirm selected example"; exit 1; }
+rm -rf "$SIMPLE_DIR"
+
+# Test 5: init --example complex selects the accrual/trading example
+COMPLEX_DIR="$(mktemp -d)"
+(cd "$COMPLEX_DIR" && $CLI init --example complex 2>&1) > "$COMPLEX_DIR/init-complex.txt"
+grep -q "Example Trading Operation" "$COMPLEX_DIR/.books/policy.md" || { echo "FAIL: init --example complex should copy complex policy"; exit 1; }
+grep -q "Policy seed: complex" "$COMPLEX_DIR/init-complex.txt" || { echo "FAIL: init should confirm selected complex example"; exit 1; }
+rm -rf "$COMPLEX_DIR"
+
+# Test 6: invalid example should fail
+INVALID_DIR="$(mktemp -d)"
+if (cd "$INVALID_DIR" && $CLI init --example nope >/dev/null 2>&1); then
+  echo "FAIL: init --example nope should fail"; exit 1
+fi
+rm -rf "$INVALID_DIR"
+
+# Test 7: record auto-creates .books/ in empty dir
+EMPTY_DIR="$(mktemp -d)"
+(cd "$EMPTY_DIR" && $CLI record '{"source":"test","type":"income","data":{"amount":100,"currency":"USD"}}' 2>&1) > /dev/null
+test -d "$EMPTY_DIR/.books" || { echo "FAIL: record should auto-create .books/"; exit 1; }
+test -f "$EMPTY_DIR/.books/ledger.jsonl" || { echo "FAIL: record should create ledger in .books/"; exit 1; }
+test -f "$EMPTY_DIR/.books/policy.md" || { echo "FAIL: record should create policy in .books/"; exit 1; }
+grep -q "reporting:" "$EMPTY_DIR/.books/policy.md" || { echo "FAIL: auto-created policy should contain usable policy content"; exit 1; }
+rm -rf "$EMPTY_DIR"
+
+# Test 8: read commands error when no books found
+EMPTY_DIR2="$(mktemp -d)"
+if (cd "$EMPTY_DIR2" && $CLI summary 2026-03 2>/dev/null); then
+  echo "FAIL: summary should error when no books found"; exit 1
+fi
+rm -rf "$EMPTY_DIR2"
+
+# Test 9: --books flag works for commands
+(cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"test","type":"income","data":{"amount":200,"currency":"USD"}}' 2>&1) > /dev/null
+BOOKS_STATS="$BOOKS_ROOT/books-stats.json"
+(cd "$BOOKS_ROOT" && $CLI --books .books stats 2>&1) > "$BOOKS_STATS"
+node -e "const s = JSON.parse(require('fs').readFileSync('$BOOKS_STATS','utf8')); if (s.events !== 1) throw new Error('expected 1 event via --books, got ' + s.events)"
+
+# Test 10: CLAWBOOKS_BOOKS env var works
+BOOKS_STATS2="$BOOKS_ROOT/books-stats2.json"
+(cd "$BOOKS_ROOT" && CLAWBOOKS_BOOKS=.books-personal $CLI record '{"source":"test","type":"expense","data":{"amount":50,"currency":"USD"}}' 2>&1) > /dev/null
+(cd "$BOOKS_ROOT" && CLAWBOOKS_BOOKS=.books-personal $CLI stats 2>&1) > "$BOOKS_STATS2"
+node -e "const s = JSON.parse(require('fs').readFileSync('$BOOKS_STATS2','utf8')); if (s.events !== 1) throw new Error('expected 1 event in personal books, got ' + s.events)"
+
+# Test 11: walk-up resolution from subdirectory
+mkdir -p "$BOOKS_ROOT/subdir/nested"
+WALKUP_STATS="$BOOKS_ROOT/walkup-stats.json"
+(cd "$BOOKS_ROOT/subdir/nested" && $CLI stats 2>&1) > "$WALKUP_STATS"
+node -e "const s = JSON.parse(require('fs').readFileSync('$WALKUP_STATS','utf8')); if (s.events !== 1) throw new Error('walk-up should find .books/')"
+
+# Test 12: backward compat — bare ledger.jsonl still works
+BARE_DIR="$(mktemp -d)"
+echo '' > "$BARE_DIR/ledger.jsonl"
+echo '# test' > "$BARE_DIR/policy.md"
+(cd "$BARE_DIR" && $CLI record '{"source":"test","type":"income","data":{"amount":99,"currency":"USD"}}' 2>&1) > /dev/null
+test ! -d "$BARE_DIR/.books" || { echo "FAIL: bare file mode should not create .books/"; exit 1; }
+BARE_STATS="$BARE_DIR/bare-stats.json"
+(cd "$BARE_DIR" && $CLI stats 2>&1) > "$BARE_STATS"
+node -e "const s = JSON.parse(require('fs').readFileSync('$BARE_STATS','utf8')); if (s.events !== 1) throw new Error('bare mode should work')"
+rm -rf "$BARE_DIR"
+
+# Test 13: pack default output goes to books dir
+(cd "$BOOKS_ROOT" && $CLI --books .books pack 2>&1) > /dev/null
+PACK_DIRS=$(ls -d "$BOOKS_ROOT/.books/audit-pack-"* 2>/dev/null | wc -l)
+test "$PACK_DIRS" -ge 1 || { echo "FAIL: pack should output to books dir by default"; exit 1; }
+
+echo "books-resolution tests: ok"

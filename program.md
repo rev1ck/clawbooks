@@ -250,9 +250,84 @@ The pack includes:
 
 These files are assistive — they give the accountant standard-format data to work with. The agent can also read them back to answer questions.
 
+## Books directory
+
+Clawbooks stores its data in a `.books/` directory:
+
+```
+.books/
+  ledger.jsonl                  # append-only event ledger
+  policy.md                     # accounting policy
+  ledger-archive-*.jsonl        # from compact
+  audit-pack-*/                 # from pack
+```
+
+### Setup
+
+```bash
+clawbooks init                         # creates .books/ in CWD
+clawbooks init --books .books-personal # creates named books dir
+clawbooks init --example simple        # use the cash-basis example
+clawbooks init --example complex       # use the accrual/trading example
+```
+
+`init` seeds `policy.md` with a bundled example policy. The user or agent should edit it before relying on reports:
+- Fill in entity name, jurisdiction, and base currency
+- Declare cash vs accrual basis
+- Add any tax, capitalization, AR/AP, and review rules
+
+Examples:
+- `default`: general-purpose starter policy
+- `simple`: cash-basis operating business
+- `complex`: accrual/trading-heavy example
+
+### Resolution order
+
+The CLI finds books in this priority:
+1. `CLAWBOOKS_LEDGER` / `CLAWBOOKS_POLICY` env vars (direct file paths)
+2. `CLAWBOOKS_BOOKS` env var (books directory)
+3. `--books <dir>` global flag
+4. Walk up from CWD looking for `.books/` containing `ledger.jsonl` or `policy.md`
+5. Bare `./ledger.jsonl` in CWD (backward compat)
+6. Auto-create `.books/` on first write command
+
+Read-only commands (`log`, `context`, `summary`, `verify`, etc.) error with guidance if no books found.
+Write commands (`record`, `batch`, `snapshot --save`, `compact`) auto-create `.books/` if nothing is found.
+When books are auto-created, clawbooks also seeds a starter `policy.md`; treat that file as a draft and customize it.
+
+### Multi-entity
+
+Each entity gets its own books directory with its own ledger + policy:
+
+```
+project/
+  .books/                  # primary entity (e.g., company)
+    ledger.jsonl
+    policy.md
+  .books-personal/         # second entity
+    ledger.jsonl
+    policy.md
+```
+
+Switch entities with `--books` or `CLAWBOOKS_BOOKS`:
+
+```bash
+clawbooks --books .books-personal context 2026-03
+CLAWBOOKS_BOOKS=.books-personal clawbooks summary 2026-03
+alias claw-personal='CLAWBOOKS_BOOKS=.books-personal clawbooks'
+```
+
+Each entity's `policy.md` declares its own name, type, jurisdiction, currency, and rules.
+There are no cross-entity CLI commands — the agent handles inter-entity reasoning.
+
+For inter-entity transactions (e.g., owner pays business expense from personal account),
+record one event in each ledger linked by `data.ref`.
+
 ## Quick reference
 
 ```
+clawbooks init [--books DIR] [--example NAME]
+                                     # create .books/ with ledger + seeded policy
 clawbooks record <json>             # append one event
 clawbooks batch                     # append JSONL from stdin
 clawbooks log [--last N]            # view recent events

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   computeId,
   readAll,
@@ -13,8 +15,161 @@ import {
   type LedgerEvent,
 } from "./ledger.js";
 
-const LEDGER = process.env.CLAWBOOKS_LEDGER ?? "./ledger.jsonl";
-const POLICY = process.env.CLAWBOOKS_POLICY ?? "./policy.md";
+// --- Books resolution ---
+
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const POLICY_EXAMPLES = {
+  default: resolve(MODULE_DIR, "..", "policy.md.example"),
+  simple: resolve(MODULE_DIR, "..", "policy-simple.md.example"),
+  complex: resolve(MODULE_DIR, "..", "policy-complex.md.example"),
+} as const;
+type PolicyExampleName = keyof typeof POLICY_EXAMPLES;
+const DEFAULT_POLICY_TEMPLATE = `---
+entity:
+  name: Replace with your entity name
+  entity_type: company
+  jurisdiction: Replace with your jurisdiction
+reporting:
+  basis: cash          # or: accrual
+  financial_year_end: 12-31
+  base_currency: USD
+tax:
+  regime: Replace with your tax regime
+---
+
+# Accounting policy
+
+Edit this file to match your entity before relying on reports.
+The ledger stores financial facts; this policy tells the agent how to interpret them.
+
+## Entity
+
+Describe the entity, what it does, and any jurisdiction-specific conventions.
+
+## Revenue recognition
+
+State when revenue is recognized.
+
+- Cash basis: recognize revenue when payment is received
+- Accrual basis: recognize revenue when an invoice is issued or performance obligation is met
+
+## Expense recognition
+
+State when expenses are recognized.
+
+- Cash basis: recognize expenses when paid
+- Accrual basis: recognize expenses when bills/invoices are received or obligations arise
+
+## Accounts receivable / payable
+
+Explain how invoices, bills, and settlements should be interpreted.
+
+## Tax and reporting notes
+
+Add any filing, tax, capitalization, or review rules the agent should follow.
+`;
+
+function availablePolicyExamples(): PolicyExampleName[] {
+  return (Object.keys(POLICY_EXAMPLES) as PolicyExampleName[]).filter((name) => existsSync(POLICY_EXAMPLES[name]));
+}
+
+function resolvePolicySeed(example?: string): { source: "example" | "fallback"; exampleName: string; path?: string } {
+  const requested = example as PolicyExampleName | undefined;
+  if (requested && requested in POLICY_EXAMPLES && existsSync(POLICY_EXAMPLES[requested])) {
+    return { source: "example", exampleName: requested, path: POLICY_EXAMPLES[requested] };
+  }
+  if (existsSync(POLICY_EXAMPLES.default)) {
+    return { source: "example", exampleName: requested ?? "default", path: POLICY_EXAMPLES.default };
+  }
+  return { source: "fallback", exampleName: requested ?? "starter" };
+}
+
+function resolveBooks(booksFlag?: string): { ledger: string; policy: string; booksDir: string | null } {
+  // 1. Explicit env vars for individual files — highest priority
+  if (process.env.CLAWBOOKS_LEDGER || process.env.CLAWBOOKS_POLICY) {
+    const ledger = process.env.CLAWBOOKS_LEDGER ?? "./ledger.jsonl";
+    const policy = process.env.CLAWBOOKS_POLICY ?? "./policy.md";
+    return { ledger, policy, booksDir: null };
+  }
+
+  // 2. CLAWBOOKS_BOOKS env var
+  const booksEnv = process.env.CLAWBOOKS_BOOKS;
+  if (booksEnv) {
+    const dir = resolve(booksEnv);
+    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir };
+  }
+
+  // 3. --books flag
+  if (booksFlag) {
+    const dir = resolve(booksFlag);
+    return { ledger: join(dir, "ledger.jsonl"), policy: join(dir, "policy.md"), booksDir: dir };
+  }
+
+  // 4. Walk up from CWD looking for .books/ containing ledger.jsonl or policy.md
+  let cur = resolve(".");
+  while (true) {
+    const candidate = join(cur, ".books");
+    if (existsSync(join(candidate, "ledger.jsonl")) || existsSync(join(candidate, "policy.md"))) {
+      return { ledger: join(candidate, "ledger.jsonl"), policy: join(candidate, "policy.md"), booksDir: candidate };
+    }
+    const parent = dirname(cur);
+    if (parent === cur) break;
+    cur = parent;
+  }
+
+  // 5. Bare files in CWD (backward compat)
+  if (existsSync("./ledger.jsonl")) {
+    return { ledger: "./ledger.jsonl", policy: "./policy.md", booksDir: null };
+  }
+
+  // 6. Nothing found — return default .books/ (will be created on write, error on read)
+  const defaultDir = resolve(".books");
+  return { ledger: join(defaultDir, "ledger.jsonl"), policy: join(defaultDir, "policy.md"), booksDir: defaultDir };
+}
+
+function ensureBooksDir(booksDir: string | null, ledger: string, policy: string): void {
+  if (booksDir && !existsSync(booksDir)) {
+    mkdirSync(booksDir, { recursive: true });
+  }
+  if (!existsSync(ledger)) {
+    writeFileSync(ledger, "", "utf-8");
+  }
+  if (!existsSync(policy)) {
+    const policySeed = resolvePolicySeed();
+    if (policySeed.source === "example" && policySeed.path) {
+      copyFileSync(policySeed.path, policy);
+    } else {
+      writeFileSync(policy, DEFAULT_POLICY_TEMPLATE, "utf-8");
+    }
+  }
+}
+
+function requireBooks(ledger: string): void {
+  if (!existsSync(ledger)) {
+    console.error("No books found. Run `clawbooks init` to create a .books/ directory,");
+    console.error("or use --books <dir> / CLAWBOOKS_BOOKS to point to an existing one.");
+    console.error(`Expected ledger path: ${ledger}`);
+    process.exit(1);
+  }
+}
+
+// Parse --books global flag from argv before command dispatch
+function extractBooksFlag(argv: string[]): { booksFlag?: string; rest: string[] } {
+  const rest: string[] = [];
+  let booksFlag: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--books" && i + 1 < argv.length) {
+      booksFlag = argv[i + 1];
+      i++;
+    } else {
+      rest.push(argv[i]);
+    }
+  }
+  return { booksFlag, rest };
+}
+
+const { booksFlag, rest: argv } = extractBooksFlag(process.argv.slice(2));
+const { ledger: LEDGER, policy: POLICY, booksDir: BOOKS_DIR } = resolveBooks(booksFlag);
 
 const OUTFLOW_TYPES = new Set([
   "expense", "tax_payment", "owner_draw", "fee", "dividend",
@@ -1310,7 +1465,8 @@ function csvEscape(val: string): string {
 function cmdPack(args: string[]) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
-  const outDir = f.out ?? `./audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`;
+  const packBase = BOOKS_DIR ?? ".";
+  const outDir = f.out ?? join(packBase, `audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`);
   const all = readAll(LEDGER);
   const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
 
@@ -1501,6 +1657,10 @@ function cmdPack(args: string[]) {
 
 const HELP = `clawbooks — accounting by inference, not by engine.
 
+Setup:
+  init    [--books DIR] [--example NAME]
+                                    Create a books directory with ledger + starter policy
+
 Data commands:
   record  <json>              Append one event to the ledger
   batch                       Append JSONL events from stdin
@@ -1554,27 +1714,49 @@ Sign convention:
   Meta types (snapshot, reclassify, opening_balance): sign not enforced
   Asset events (disposal, write_off, impairment): sign not enforced
 
+Setup:
+  init    [--books DIR] [--example NAME]
+                                    Create a books directory with ledger + starter policy
+
+Global flags:
+  --books <dir>                     Use a specific books directory
+
+Init flags:
+  --example <name>                  Policy seed: default, simple, complex
+
 Environment:
-  CLAWBOOKS_LEDGER    default: ./ledger.jsonl
-  CLAWBOOKS_POLICY    default: ./policy.md
+  CLAWBOOKS_BOOKS     Books directory (default: auto-detected .books/)
+  CLAWBOOKS_LEDGER    Override ledger path (takes priority over books dir)
+  CLAWBOOKS_POLICY    Override policy path (takes priority over books dir)
+
+Books resolution order:
+  1. CLAWBOOKS_LEDGER / CLAWBOOKS_POLICY env vars (direct file paths)
+  2. CLAWBOOKS_BOOKS env var (books directory)
+  3. --books <dir> flag (books directory)
+  4. Walk up from CWD looking for .books/ containing ledger.jsonl or policy.md
+  5. Bare ./ledger.jsonl in CWD (backward compat)
+  6. Auto-create .books/ on first write command
+
+Bootstrap behavior:
+  New books are seeded with a policy example. Edit policy.md to match your entity and jurisdiction.
 
 Examples:
+  clawbooks init
+  clawbooks init --example simple
+  clawbooks init --example complex
+  clawbooks init --books .books-personal
   clawbooks record '{"source":"bank","type":"expense","data":{"amount":100,"currency":"USD","description":"test"}}'
   cat events.jsonl | clawbooks batch
+  clawbooks --books .books-personal summary 2026-03
   clawbooks log --last 10 -S stripe
-  clawbooks log -S bank -T expense
-  clawbooks context 2026-03
   clawbooks context 2026-03 --include-policy
-  clawbooks policy --path
-  clawbooks verify 2026-03
-  clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --currency USD --gaps
-  clawbooks review --source bank
   clawbooks verify 2026-03 --balance 153869.05 --currency USD
-  clawbooks summary 2026-03
-  clawbooks snapshot 2026-03 --save
-  clawbooks assets --as-of 2026-03-31
-  clawbooks compact 2025-12
   clawbooks pack 2026-03 --out ./march-pack
+
+Multi-entity:
+  clawbooks init --books .books-personal
+  clawbooks --books .books-personal record '...'
+  CLAWBOOKS_BOOKS=.books-personal clawbooks summary 2026-03
 
 Agent workflow:
   1. Agent runs: clawbooks context 2026-03
@@ -1586,11 +1768,79 @@ Agent workflow:
   7. Agent runs: clawbooks snapshot --save to persist period summary
 `;
 
+// --- Init command ---
+
+function cmdInit(args: string[]) {
+  const f = flags(args);
+  const validExamples = ["default", "simple", "complex"];
+  if (f.example && !validExamples.includes(f.example)) {
+    console.error(`Unknown policy example "${f.example}". Available examples: ${validExamples.join(", ")}`);
+    process.exit(1);
+  }
+  const dir = resolve(f.books ?? booksFlag ?? ".books");
+  const ledger = join(dir, "ledger.jsonl");
+  const policy = join(dir, "policy.md");
+  const policySeed = resolvePolicySeed(f.example);
+  const hadLedger = existsSync(ledger);
+  const hadPolicy = existsSync(policy);
+
+  mkdirSync(dir, { recursive: true });
+
+  if (!hadLedger) {
+    writeFileSync(ledger, "", "utf-8");
+  }
+
+  if (!hadPolicy) {
+    if (policySeed.source === "example" && policySeed.path) {
+      copyFileSync(policySeed.path, policy);
+    } else {
+      writeFileSync(policy, DEFAULT_POLICY_TEMPLATE, "utf-8");
+    }
+  }
+
+  if (hadLedger && hadPolicy) {
+    console.log(`Books directory already exists at ${dir}`);
+  } else {
+    if (!hadLedger) console.log(`Created ${dir}/ledger.jsonl`);
+    if (!hadPolicy) console.log(`Created ${dir}/policy.md`);
+  }
+
+  console.log();
+  console.log(`Books directory: ${dir}`);
+  console.log(`Ledger: ${ledger}`);
+  console.log(`Policy: ${policy}`);
+  console.log(`Policy seed: ${policySeed.exampleName}`);
+  console.log(`Available examples: ${availablePolicyExamples().join(", ") || "starter"}`);
+  console.log();
+  console.log("Next step: edit policy.md to match your entity, reporting basis, jurisdiction, and rules.");
+  console.log("Treat the seeded example as a starting point, then tailor it to your preferences.");
+  console.log();
+  console.log("Recommended .gitignore additions:");
+  console.log(`  ${dir.startsWith("/") ? dir : dir.replace(/^\.\//, "")}/ledger*.jsonl`);
+  console.log(`  ${dir.startsWith("/") ? dir : dir.replace(/^\.\//, "")}/audit-pack-*`);
+}
+
 // --- Dispatch ---
 
-const [cmd, ...args] = process.argv.slice(2);
+const WRITE_COMMANDS = new Set(["record", "batch", "init", "snapshot", "compact"]);
+const READ_COMMANDS = new Set(["log", "context", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack"]);
+
+const [cmd, ...args] = argv;
+
+// For write commands (except init), auto-create .books/ if needed
+if (WRITE_COMMANDS.has(cmd) && cmd !== "init") {
+  // snapshot --save is a write; snapshot without --save is a read
+  if (cmd !== "snapshot" || args.includes("--save")) {
+    ensureBooksDir(BOOKS_DIR, LEDGER, POLICY);
+  } else {
+    requireBooks(LEDGER);
+  }
+} else if (READ_COMMANDS.has(cmd)) {
+  requireBooks(LEDGER);
+}
 
 switch (cmd) {
+  case "init":      cmdInit(args); break;
   case "record":    cmdRecord(args); break;
   case "batch":     await cmdBatch(); break;
   case "log":       cmdLog(args); break;

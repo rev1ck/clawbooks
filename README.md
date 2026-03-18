@@ -129,8 +129,26 @@ There is no accounting engine. In clawbooks, the agent is the engine.
 ```bash
 npm install -g clawbooks
 clawbooks --help
-cp policy.md.example policy.md
+clawbooks init
 ```
+
+`clawbooks init` creates a `.books/` directory with:
+- `ledger.jsonl` for append-only records
+- `policy.md` seeded from a bundled policy example
+
+Edit `.books/policy.md` before relying on reports. The seeded policy is a starting point: you or your agent should tailor it to the entity, basis, jurisdiction, and reporting rules.
+
+Use a specific bundled example when it fits better:
+
+```bash
+clawbooks init --example default
+clawbooks init --example simple
+clawbooks init --example complex
+```
+
+- `default`: generic business policy
+- `simple`: simpler cash-basis operating business
+- `complex`: accrual/trading-heavy example
 
 ## Local setup
 
@@ -139,7 +157,16 @@ git clone https://github.com/rev1ck/clawbooks.git
 cd clawbooks
 npm install
 npm run build
-cp policy.md.example policy.md   # edit with your own accounting rules
+node build/cli.js init
+```
+
+For multiple entities, use separate books directories:
+
+```bash
+clawbooks init --books .books-company
+clawbooks init --books .books-personal
+clawbooks init --books .books-company --example simple
+clawbooks --books .books-company summary 2026-03
 ```
 
 ## How it works
@@ -150,6 +177,12 @@ The important command is `clawbooks context`: it prints a compact working envelo
 ## Commands
 
 ```bash
+# Bootstrap
+clawbooks init
+clawbooks init --example simple
+clawbooks init --example complex
+clawbooks init --books .books-personal
+
 # Write events
 clawbooks record '{"source":"stripe","type":"payment","data":{"amount":500,"currency":"USD"}}'
 cat events.jsonl | clawbooks batch
@@ -184,7 +217,10 @@ clawbooks pack 2026-03 --out ./march-pack           # generate audit pack (CSVs 
 
 # Print the policy
 clawbooks policy
+clawbooks policy --path
 ```
+
+Use `--books <dir>` or `CLAWBOOKS_BOOKS=<dir>` to switch entities. Read-only commands error with a clear message if no books are found; write commands auto-create `.books/` when needed. After `init`, clawbooks confirms the created folder, ledger path, policy path, and the selected example so the user can verify the setup immediately.
 
 ## The context command
 
@@ -192,7 +228,7 @@ This is the core command. It prints a `context` envelope for the requested perio
 
 - `metadata` explains the requested and effective window, whether a snapshot was used, and what kinds of records are present
 - `instructions` tells the agent how to interpret snapshot plus events
-- `summary` provides a compact management view before the event rows, including operating P&L, cash movement, review counts, and top categories
+- `summary` provides a compact management view before the event rows, including movement summary, cash movement, review counts, and top categories
 - `snapshot` is the starting state, when available
 - `events` contains compact event rows by default; use `--verbose` for full raw records
 
@@ -325,17 +361,23 @@ This writes a temporary scoped package into `.dist/scoped-cli` for inspection or
 cli.ts                  CLI commands
 ledger.ts               JSONL read/write/filter
 program.md              Agent instructions
-policy.md               Your accounting rules (you write this, gitignored)
-policy.md.example       Example policy to start from
-ledger.jsonl            Your financial events (append-only, gitignored)
+.books/
+  policy.md             Your accounting rules (seeded, then edited)
+  ledger.jsonl          Your financial events (append-only)
+  ledger-archive-*.jsonl
+  audit-pack-*/
+policy.md.example       Starter policy template bundled with the package
+policy-simple.md.example
+policy-complex.md.example
 ```
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAWBOOKS_LEDGER` | `./ledger.jsonl` | Path to ledger |
-| `CLAWBOOKS_POLICY` | `./policy.md` | Path to policy |
+| `CLAWBOOKS_BOOKS` | auto-detected `.books/` | Books directory |
+| `CLAWBOOKS_LEDGER` | unset | Direct ledger path override |
+| `CLAWBOOKS_POLICY` | unset | Direct policy path override |
 
 No API key needed. Bring your own agent.
 
