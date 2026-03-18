@@ -37,6 +37,12 @@ Small web design studio. US-based, single member LLC.
 Cash basis accounting. Fiscal year: January to December.
 Base currency: USD.
 
+## Data conventions
+
+- Use `data.ref`, `data.source_doc`, and `data.source_row` during imports so each ledger event can be traced back to the source statement or receipt.
+- Use `data.recorded_by` or `data.import_session` when an agent writes events in bulk.
+- Use `correction` events for non-category fixes and `confirm` events when reviewed items become accepted.
+
 ## Revenue recognition
 
 Cash basis. Income is recognized when payment is received, not when invoiced. Invoices and bills are tracking events — they do not create recognized revenue or expenses.

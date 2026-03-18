@@ -39,6 +39,21 @@ Describe your business here.
 Base currency: USD.
 The CLI aggregates per-currency; the agent handles cross-currency reporting and conversions when needed.
 
+## Data conventions
+
+Use these conventions when relevant:
+
+- **Lot tracking**: `data.lot_id`, `data.lot_ref`, `data.disposition_lots`
+- **FX / valuation**: `data.fx_rate`, `data.base_currency`, `data.price_usd`, `data.price_source`, `data.valuation_ts`
+- **Provenance**: `data.ref`, `data.source_doc`, `data.source_row`, `data.source_hash`, `data.provenance`
+- **Writer identity**: `data.recorded_by`, `data.recorded_via`, `data.import_session`
+
+For append-only review trails:
+
+- `reclassify` changes category/type interpretation
+- `correction` records non-category fixes against an earlier event via `data.original_id`
+- `confirm` records that an event was reviewed and accepted via `data.original_id`
+
 ## Revenue recognition
 
 Basis is declared in the structured hints above.

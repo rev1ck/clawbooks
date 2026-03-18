@@ -313,6 +313,22 @@ Use `clawbooks documents` for neutral settlement views:
 
 These are data views only. The CLI does not decide recognition or accounting basis treatment.
 
+## Recommended conventions
+
+Clawbooks works best when policy and ingestion agree on a few standard fields:
+
+- Lot tracking: `data.lot_id`, `data.lot_ref`, `data.disposition_lots`
+- FX / valuation: `data.fx_rate`, `data.base_currency`, `data.price_usd`, `data.price_source`, `data.valuation_ts`
+- Provenance: `data.ref`, `data.source_doc`, `data.source_row`, `data.source_hash`, `data.provenance`
+- Writer identity: `data.recorded_by`, `data.recorded_via`, `data.import_session`
+
+For append-only review and amendment workflows:
+- `reclassify` updates category/type interpretation
+- `correction` records field-level fixes against an earlier event
+- `confirm` records that an event was reviewed and accepted
+
+These are conventions and audit records, not accounting logic.
+
 ## Importing data
 
 There is no import command. The agent is the importer.

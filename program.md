@@ -29,17 +29,66 @@ clawbooks record '{"source":"stripe","type":"income","data":{"amount":500,"curre
 ```
 
 Required fields: `source`, `type`, `data` (any object). `ts` is optional (defaults to now).
-`data.currency` is **required** — the ledger rejects events without it (except snapshots, reclassify, opening_balance).
+`data.currency` is **required** — the ledger rejects events without it (except snapshots, reclassify, opening_balance, correction, and confirm).
 
 The CLI enforces sign convention automatically for known types:
 - **Outflow** (stored negative): `expense`, `tax_payment`, `owner_draw`, `fee`, `dividend`, `loan_repayment`, `refund`, `transfer_out`, `withdrawal`
 - **Inflow** (stored positive): `income`, `deposit`, `equity_injection`, `loan_received`, `transfer_in`, `refund_received`, `grant`
 - **Document types** (sign based on `data.direction`): `invoice`, `bill` — `issued` stores positive, `received` stores negative. If direction is absent, sign is not enforced
-- **Meta types** (sign not enforced): `snapshot`, `reclassify`, `opening_balance`
+- **Meta types** (sign not enforced): `snapshot`, `reclassify`, `opening_balance`, `correction`, `confirm`
 - **Asset events** (sign not enforced): `disposal`, `write_off`, `impairment`
 - **Unknown types**: the CLI warns and preserves the sign you provide. Use critical thinking — if a new type represents money leaving the business, pass a negative amount. `verify` will flag sign inconsistencies.
 
 The ledger is hash-chained — each event's `prev` field links to the previous event.
+
+## Recommended data conventions
+
+These are conventions, not engine rules. The CLI stores them; the policy tells the agent when to use them.
+
+### Cost basis / lot tracking
+
+For crypto or lot-tracked assets, use:
+- `data.lot_id`: the created lot for an acquisition event
+- `data.lot_ref`: a single referenced lot on a disposition
+- `data.disposition_lots`: array of `{lot_id, quantity}` when one sale consumes multiple lots
+
+The agent assigns lots during ingestion based on policy (FIFO, LIFO, specific identification, etc.). The CLI does not calculate cost basis.
+
+### FX / transaction-time valuation
+
+For cross-currency and crypto events, store valuation facts at ingestion time:
+- `data.fx_rate`
+- `data.base_currency`
+- `data.price_usd`
+- `data.price_source`
+- `data.valuation_ts`
+
+This avoids re-fetching historical prices later.
+
+### Provenance
+
+To trace a ledger event back to source material, use:
+- `data.ref` for idempotent import identity
+- `data.source_doc` for the source file or artifact
+- `data.source_row` for row number or record index
+- `data.source_hash` for content fingerprint
+- `data.provenance` for free-form extraction notes
+
+### Agent / import identity
+
+To record who or what wrote the event, use:
+- `data.recorded_by`
+- `data.recorded_via`
+- `data.import_session`
+
+### Review lifecycle
+
+To close the review loop without editing history:
+- `reclassify` changes category/type interpretation
+- `correction` records non-category fixes against an existing event
+- `confirm` records that an event was reviewed and accepted
+
+These are audit events. The CLI stores and surfaces them; the agent decides what they mean for final reporting.
 
 For bulk data, output JSONL and pipe it:
 
@@ -202,6 +251,18 @@ clawbooks record '{"source":"manual","type":"reclassify","data":{"original_id":"
 ```
 
 The `summary` command automatically applies reclassifications. The `review` command excludes already-reclassified events.
+
+For non-category amendments, record a neutral correction event:
+
+```bash
+clawbooks record '{"source":"manual","type":"correction","data":{"original_id":"abc123","reason":"statement typo fixed","corrected_fields":{"amount":125.50,"ts":"2026-03-14T00:00:00.000Z"}}}'
+```
+
+To mark an event as reviewed and confirmed:
+
+```bash
+clawbooks record '{"source":"manual","type":"confirm","data":{"original_id":"abc123","confidence":"clear","confirmed_by":"claude-code","notes":"matched to receipt"}}'
+```
 
 ## Generating snapshots
 

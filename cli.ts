@@ -195,7 +195,7 @@ const INFLOW_TYPES = new Set([
   "income", "deposit", "equity_injection", "loan_received",
   "transfer_in", "refund_received", "grant",
 ]);
-const META_TYPES = new Set(["snapshot", "reclassify", "opening_balance"]);
+const META_TYPES = new Set(["snapshot", "reclassify", "opening_balance", "correction", "confirm"]);
 const ASSET_EVENT_TYPES = new Set(["disposal", "write_off", "impairment"]);
 const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
 const OPERATING_INCOME_TYPES = new Set(["income", "refund_received", "grant"]);
@@ -437,6 +437,7 @@ function buildCompactContextSummary(summary: ReturnType<typeof buildContextSumma
     settlement_summary: summary.settlement_summary,
     receivable_candidates: summary.receivable_candidates,
     payable_candidates: summary.payable_candidates,
+    correction_summary: summary.correction_summary,
     top_open_documents: summary.top_open_documents,
     top_operating_expenses: topCategoryEntries(summary.report_sections.operating_expenses),
     top_capex: topCategoryEntries(summary.report_sections.capex, 3),
@@ -456,14 +457,58 @@ function buildReclassifyMap(events: LedgerEvent[]): Record<string, string> {
   return reclassifyMap;
 }
 
+function buildConfirmedSet(events: LedgerEvent[]): Set<string> {
+  return new Set(
+    events
+      .filter((e) => e.type === "confirm" && e.data.original_id)
+      .map((e) => String(e.data.original_id)),
+  );
+}
+
+function buildCorrectionSummary(events: LedgerEvent[]) {
+  const corrections = events.filter((e) => e.type === "correction");
+  const confirms = events.filter((e) => e.type === "confirm");
+  const correctedOriginals = new Set(
+    corrections
+      .filter((e) => e.data.original_id)
+      .map((e) => String(e.data.original_id)),
+  );
+  const confirmedOriginals = new Set(
+    confirms
+      .filter((e) => e.data.original_id)
+      .map((e) => String(e.data.original_id)),
+  );
+  return {
+    correction_events: corrections.length,
+    corrected_events: correctedOriginals.size,
+    confirm_events: confirms.length,
+    confirmed_events: confirmedOriginals.size,
+    recent_corrections: corrections.slice(-5).map((e) => ({
+      id: e.id,
+      ts: e.ts,
+      original_id: String(e.data.original_id ?? ""),
+      reason: String(e.data.reason ?? ""),
+      corrected_fields: e.data.corrected_fields ?? null,
+    })),
+    recent_confirmations: confirms.slice(-5).map((e) => ({
+      id: e.id,
+      ts: e.ts,
+      original_id: String(e.data.original_id ?? ""),
+      confidence: String(e.data.confidence ?? ""),
+      confirmed_by: String(e.data.confirmed_by ?? e.data.recorded_by ?? ""),
+    })),
+  };
+}
+
 function reviewCounts(events: LedgerEvent[], all: LedgerEvent[]): Record<string, number> {
   const reclassified = new Set(
     all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
   );
+  const confirmed = buildConfirmedSet(all);
   const counts = { unclear: 0, inferred: 0, unset: 0, clear: 0 };
 
   for (const e of events) {
-    if (e.type === "reclassify" || e.type === "snapshot" || reclassified.has(e.id)) continue;
+    if (e.type === "reclassify" || META_TYPES.has(e.type) || reclassified.has(e.id) || confirmed.has(e.id)) continue;
     const confidence = String(e.data.confidence ?? "unset");
     if (confidence === "clear") counts.clear++;
     else if (confidence === "unclear") counts.unclear++;
@@ -487,9 +532,10 @@ function unresolvedReviewItems(events: LedgerEvent[], all: LedgerEvent[]): Array
   const reclassified = new Set(
     all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
   );
+  const confirmed = buildConfirmedSet(all);
 
   return events
-    .filter((e) => e.type !== "reclassify" && e.type !== "snapshot" && !reclassified.has(e.id))
+    .filter((e) => !META_TYPES.has(e.type) && !reclassified.has(e.id) && !confirmed.has(e.id))
     .map((e) => {
       const amount = Number(e.data.amount);
       return {
@@ -589,59 +635,61 @@ function buildDocumentSettlementData(events: LedgerEvent[], asOf = new Date().to
   }> = [];
 
   for (const e of events) {
-    if (META_TYPES.has(e.type)) continue;
+    if (META_TYPES.has(e.type) || !DOCUMENT_TYPES.has(e.type)) continue;
     const amount = signedAmount(e);
     if (amount === undefined) continue;
-    if (DOCUMENT_TYPES.has(e.type)) {
-      const invoiceId = String(e.data.invoice_id ?? "").trim();
-      const direction = inferDocumentDirection(e);
-      if (!invoiceId) {
-        documentsMissingInvoiceId.push({
-          id: e.id,
-          ts: e.ts,
-          type: e.type,
-          direction,
-          amount,
-          due_date: e.data.due_date ? String(e.data.due_date) : null,
-          counterparty: String(e.data.counterparty ?? ""),
-        });
-        continue;
-      }
-      if (!documentGroups.has(invoiceId)) {
-        documentGroups.set(invoiceId, {
-          invoice_id: invoiceId,
-          direction,
-          document_count: 0,
-          document_total: 0,
-          document_magnitude: 0,
-          counterparty: [],
-          currencies: [],
-          due_dates: [],
-          first_document_ts: e.ts,
-          last_document_ts: e.ts,
-          matched_cash_total: 0,
-          matched_cash_magnitude: 0,
-          matched_cash_count: 0,
-          direction_mismatch_cash_total: 0,
-        });
-      }
-      const group = documentGroups.get(invoiceId)!;
-      group.document_count++;
-      group.document_total = round2(group.document_total + amount);
-      group.document_magnitude = round2(group.document_magnitude + Math.abs(amount));
-      group.first_document_ts = group.first_document_ts < e.ts ? group.first_document_ts : e.ts;
-      group.last_document_ts = group.last_document_ts > e.ts ? group.last_document_ts : e.ts;
-      const counterparty = String(e.data.counterparty ?? "");
-      if (counterparty && !group.counterparty.includes(counterparty)) group.counterparty.push(counterparty);
-      const currency = String(e.data.currency ?? "");
-      if (currency && !group.currencies.includes(currency)) group.currencies.push(currency);
-      const dueDate = String(e.data.due_date ?? "");
-      if (dueDate && !group.due_dates.includes(dueDate)) group.due_dates.push(dueDate);
-      if (group.direction === "unknown") group.direction = direction;
-      else if (direction !== "unknown" && group.direction !== direction) group.direction = "unknown";
+    const invoiceId = String(e.data.invoice_id ?? "").trim();
+    const direction = inferDocumentDirection(e);
+    if (!invoiceId) {
+      documentsMissingInvoiceId.push({
+        id: e.id,
+        ts: e.ts,
+        type: e.type,
+        direction,
+        amount,
+        due_date: e.data.due_date ? String(e.data.due_date) : null,
+        counterparty: String(e.data.counterparty ?? ""),
+      });
       continue;
     }
+    if (!documentGroups.has(invoiceId)) {
+      documentGroups.set(invoiceId, {
+        invoice_id: invoiceId,
+        direction,
+        document_count: 0,
+        document_total: 0,
+        document_magnitude: 0,
+        counterparty: [],
+        currencies: [],
+        due_dates: [],
+        first_document_ts: e.ts,
+        last_document_ts: e.ts,
+        matched_cash_total: 0,
+        matched_cash_magnitude: 0,
+        matched_cash_count: 0,
+        direction_mismatch_cash_total: 0,
+      });
+    }
+    const group = documentGroups.get(invoiceId)!;
+    group.document_count++;
+    group.document_total = round2(group.document_total + amount);
+    group.document_magnitude = round2(group.document_magnitude + Math.abs(amount));
+    group.first_document_ts = group.first_document_ts < e.ts ? group.first_document_ts : e.ts;
+    group.last_document_ts = group.last_document_ts > e.ts ? group.last_document_ts : e.ts;
+    const counterparty = String(e.data.counterparty ?? "");
+    if (counterparty && !group.counterparty.includes(counterparty)) group.counterparty.push(counterparty);
+    const currency = String(e.data.currency ?? "");
+    if (currency && !group.currencies.includes(currency)) group.currencies.push(currency);
+    const dueDate = String(e.data.due_date ?? "");
+    if (dueDate && !group.due_dates.includes(dueDate)) group.due_dates.push(dueDate);
+    if (group.direction === "unknown") group.direction = direction;
+    else if (direction !== "unknown" && group.direction !== direction) group.direction = "unknown";
+  }
 
+  for (const e of events) {
+    if (META_TYPES.has(e.type) || DOCUMENT_TYPES.has(e.type)) continue;
+    const amount = signedAmount(e);
+    if (amount === undefined) continue;
     const invoiceId = String(e.data.invoice_id ?? "").trim();
     if (!invoiceId) continue;
     if (documentGroups.has(invoiceId)) {
@@ -805,6 +853,7 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
   const reclassifiedEventCount = events.filter((e) => reclassifyMap[e.id] !== undefined).length;
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, all);
+  const corrections = buildCorrectionSummary(events);
 
   return {
     event_count: events.length,
@@ -825,6 +874,7 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
       raw_events_in_window: rawReclassifications,
       applied_to_events_in_window: reclassifiedEventCount,
     },
+    correction_summary: corrections,
     review: {
       needs_review: needsReview,
       by_confidence: confidence,
@@ -1051,7 +1101,7 @@ function cmdContext(args: string[]) {
   if (!verbose) {
     console.log(`This is the compact context view. Use --verbose to print the full raw event payloads.`);
   }
-  console.log(`Reclassify events are append-only corrections; use them when interpreting categories.`);
+  console.log(`Reclassify, correction, and confirm events are append-only audit events; use them when interpreting categories, field fixes, and review status.`);
   console.log(`Amounts are signed: inflows are positive, outflows are negative for known flow types. Document types (invoice, bill) are signed by direction.`);
   console.log(`</instructions>`);
   console.log();
@@ -1115,6 +1165,20 @@ function cmdPolicy(args: string[]) {
       if (!/^## Revenue recognition$/m.test(text)) suggestions.push("Add a '## Revenue recognition' section.");
       if (!/^## Accounts receivable \/ payable$/m.test(text)) suggestions.push("Add an '## Accounts receivable / payable' section if documents are used.");
       if (!/^## Reconciliation$/m.test(text)) suggestions.push("Add a '## Reconciliation' section with import checks.");
+      if (!/^## Data conventions$/m.test(text)) suggestions.push("Add a '## Data conventions' section for lots, FX, provenance, and agent identity.");
+      const mentionsCrypto = /crypto|cost basis|lot/i.test(text);
+      if (mentionsCrypto && !/lot_id|lot_ref|disposition_lots/i.test(text)) {
+        suggestions.push("Crypto/trading policy should define lot-tracking conventions such as data.lot_id or data.lot_ref.");
+      }
+      if (mentionsCrypto && !/fx_rate|price_usd|valuation_ts|price_source/i.test(text)) {
+        suggestions.push("Crypto/trading policy should define FX or valuation fields such as data.fx_rate or data.price_usd.");
+      }
+      if (!/source_doc|provenance|source_row|source_hash/i.test(text)) {
+        suggestions.push("Define provenance conventions such as data.source_doc, data.source_row, or data.provenance.");
+      }
+      if (!/recorded_by|recorded_via|import_session/i.test(text)) {
+        suggestions.push("Define write provenance conventions such as data.recorded_by or data.import_session.");
+      }
     }
     const status = issues.length === 0 && suggestions.length === 0 ? "ok" : "warn";
     console.log(JSON.stringify({
@@ -1421,11 +1485,13 @@ function cmdReview(args: string[]) {
   const reclassified = new Set(
     all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
   );
+  const confirmed = buildConfirmedSet(all);
 
-  // Filter out snapshots, reclassify events, and already-handled events
+  // Filter out meta events and already-handled events
   const reviewable = events
-    .filter((e) => e.type !== "reclassify" && e.type !== "snapshot")
-    .filter((e) => !reclassified.has(e.id));
+    .filter((e) => !META_TYPES.has(e.type))
+    .filter((e) => !reclassified.has(e.id))
+    .filter((e) => !confirmed.has(e.id));
 
   const tiers: Record<string, LedgerEvent[]> = { unclear: [], inferred: [], unset: [] };
 
@@ -1474,6 +1540,7 @@ function cmdSummary(args: string[]) {
   const reporting = buildReportingSections(events);
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, all);
+  const correctionSummary = buildCorrectionSummary(events);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -1538,6 +1605,7 @@ function cmdSummary(args: string[]) {
     payable_candidates: settlements.payable_candidates,
     top_open_documents: settlements.items.slice(0, 10),
     review_materiality: reviewMateriality,
+    correction_summary: correctionSummary,
   }, null, 2));
 }
 
@@ -1895,6 +1963,9 @@ function cmdPack(args: string[]) {
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0, outflows = 0;
   const reporting = buildReportingSections(events);
+  const settlements = buildDocumentSettlementData(events, before ?? new Date().toISOString());
+  const reviewMateriality = buildReviewMateriality(events, all);
+  const correctionSummaryPack = buildCorrectionSummary(events);
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
@@ -1922,6 +1993,12 @@ function cmdPack(args: string[]) {
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
+    settlement_summary: settlements.settlement_summary,
+    documents_by_direction: settlements.documents_by_direction,
+    receivable_candidates: settlements.receivable_candidates,
+    payable_candidates: settlements.payable_candidates,
+    review_materiality: reviewMateriality,
+    correction_summary: correctionSummaryPack,
   }, null, 2) + "\n", "utf-8");
 
   // --- asset_register.csv ---
@@ -1998,6 +2075,7 @@ function cmdPack(args: string[]) {
   const hash = createHash("sha256").update(events.map((e) => e.id).join(",")).digest("hex");
   let debits = 0, credits = 0;
   const issues: string[] = [];
+  const correctionSummaryVerify = buildCorrectionSummary(events);
   for (const e of events) {
     const amount = Number(e.data.amount);
     if (e.data.amount !== undefined && !isNaN(amount)) {
@@ -2009,6 +2087,7 @@ function cmdPack(args: string[]) {
   }
   writeFileSync(`${outDir}/verify.json`, JSON.stringify({
     event_count: events.length, debits, credits, hash, issues,
+    correction_summary: correctionSummaryVerify,
     generated: new Date().toISOString(),
   }, null, 2) + "\n", "utf-8");
 
@@ -2017,9 +2096,40 @@ function cmdPack(args: string[]) {
     writeFileSync(`${outDir}/policy.md`, readFileSync(POLICY, "utf-8"), "utf-8");
   }
 
+  // --- corrections.csv ---
+  const correctionEvents = all.filter((e) => e.type === "correction");
+  if (correctionEvents.length > 0) {
+    const header = "date,original_id,reason,corrected_fields,id";
+    const rows = correctionEvents.map((e) => [
+      e.ts.slice(0, 10),
+      String(e.data.original_id ?? ""),
+      csvEscape(String(e.data.reason ?? "")),
+      csvEscape(JSON.stringify(e.data.corrected_fields ?? {})),
+      e.id,
+    ].join(","));
+    writeFileSync(`${outDir}/corrections.csv`, [header, ...rows].join("\n") + "\n", "utf-8");
+  }
+
+  // --- confirmations.csv ---
+  const confirmEvents = all.filter((e) => e.type === "confirm");
+  if (confirmEvents.length > 0) {
+    const header = "date,original_id,confidence,confirmed_by,notes,id";
+    const rows = confirmEvents.map((e) => [
+      e.ts.slice(0, 10),
+      String(e.data.original_id ?? ""),
+      csvEscape(String(e.data.confidence ?? "")),
+      csvEscape(String(e.data.confirmed_by ?? e.data.recorded_by ?? "")),
+      csvEscape(String(e.data.notes ?? "")),
+      e.id,
+    ].join(","));
+    writeFileSync(`${outDir}/confirmations.csv`, [header, ...rows].join("\n") + "\n", "utf-8");
+  }
+
   // Summary output
   const files = ["general_ledger.csv", "summary.json", "verify.json"];
   if (reclassEvents.length > 0) files.push("reclassifications.csv");
+  if (correctionEvents.length > 0) files.push("corrections.csv");
+  if (confirmEvents.length > 0) files.push("confirmations.csv");
   if (capitalizedEvents.length > 0) files.push("asset_register.csv");
   if (existsSync(POLICY)) files.push("policy.md");
 
@@ -2091,7 +2201,7 @@ Sign convention:
   Outflow types (expense, tax_payment, owner_draw, fee): amount stored as negative
   Inflow types: amount stored as positive
   Document types (invoice, bill): sign based on data.direction (issued=positive, received=negative)
-  Meta types (snapshot, reclassify, opening_balance): sign not enforced
+  Meta types (snapshot, reclassify, opening_balance, correction, confirm): sign not enforced
   Asset events (disposal, write_off, impairment): sign not enforced
 
 Setup:

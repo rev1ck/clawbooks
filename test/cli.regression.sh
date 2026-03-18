@@ -233,6 +233,9 @@ cat > "$DOCS_ROOT/.books/ledger.jsonl" <<'EOF'
 {"ts":"2026-03-18T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-300,"currency":"USD","invoice_id":"BILL-001","description":"Bill payment","confidence":"clear"},"id":"pay2","prev":"z"}
 {"ts":"2026-03-10T00:00:00.000Z","source":"manual","type":"invoice","data":{"amount":120,"currency":"USD","direction":"issued","counterparty":"beta","confidence":"clear"},"id":"doc3","prev":"q"}
 {"ts":"2026-03-12T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":75,"currency":"USD","category":"software","confidence":"unclear"},"id":"rev1","prev":"w"}
+{"ts":"2026-03-13T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":40,"currency":"USD","category":"meals","confidence":"inferred","recorded_by":"agent-1"},"id":"rev2","prev":"r"}
+{"ts":"2026-03-14T00:00:00.000Z","source":"manual","type":"confirm","data":{"original_id":"rev1","confidence":"clear","confirmed_by":"reviewer-1","notes":"matched to receipt"},"id":"conf1","prev":"s"}
+{"ts":"2026-03-15T00:00:00.000Z","source":"manual","type":"correction","data":{"original_id":"pay1","reason":"bank memo typo","corrected_fields":{"description":"Partial payment corrected"}},"id":"corr1","prev":"t"}
 EOF
 
 POLICY_LINT="$DOCS_ROOT/policy-lint.json"
@@ -253,12 +256,27 @@ SUMMARY_DOCS="$DOCS_ROOT/summary-docs.json"
 grep -q '"settlement_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include settlement_summary"; exit 1; }
 grep -q '"receivable_candidates"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include receivable_candidates"; exit 1; }
 grep -q '"review_materiality"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include review_materiality"; exit 1; }
+grep -q '"correction_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include correction_summary"; exit 1; }
+grep -q '"confirm_events": 1' "$SUMMARY_DOCS" || { echo "FAIL: summary should include confirm count"; exit 1; }
+grep -q '"correction_events": 1' "$SUMMARY_DOCS" || { echo "FAIL: summary should include correction count"; exit 1; }
 
 CONTEXT_DOCS="$DOCS_ROOT/context-docs.txt"
 (cd "$DOCS_ROOT" && $CLI context 2026-03 2>&1) > "$CONTEXT_DOCS"
 grep -q '"settlement_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should include settlement_summary"; exit 1; }
 grep -q '"top_open_documents"' "$CONTEXT_DOCS" || { echo "FAIL: context should include top_open_documents"; exit 1; }
 grep -q '"review_materiality"' "$CONTEXT_DOCS" || { echo "FAIL: context should include review_materiality"; exit 1; }
+grep -q '"correction_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should include correction_summary"; exit 1; }
+
+REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
+(cd "$DOCS_ROOT" && $CLI review 2026-03 2>&1) > "$REVIEW_DOCS"
+grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
+grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
+
+PACK_OUT="$DOCS_ROOT/pack"
+mkdir -p "$PACK_OUT"
+(cd "$DOCS_ROOT" && $CLI pack 2026-03 --out "$PACK_OUT" >/dev/null 2>&1)
+test -f "$PACK_OUT/corrections.csv" || { echo "FAIL: pack should include corrections.csv"; exit 1; }
+test -f "$PACK_OUT/confirmations.csv" || { echo "FAIL: pack should include confirmations.csv"; exit 1; }
 rm -rf "$DOCS_ROOT"
 
 echo "books-resolution tests: ok"

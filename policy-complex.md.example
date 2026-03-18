@@ -45,6 +45,14 @@ Solo quantitative trader operating across centralized exchanges, DeFi protocols,
 Base currency: USD for all P&L tracking.
 Fiscal year: January 1 to December 31.
 
+## Data conventions
+
+- Lot tracking uses `data.lot_id`, `data.lot_ref`, and `data.disposition_lots`; the agent assigns these during ingestion per FIFO policy.
+- Store transaction-time valuation facts using `data.price_usd`, `data.fx_rate`, `data.price_source`, and `data.valuation_ts`.
+- Record provenance with `data.ref`, `data.source_doc`, `data.source_row`, and `data.source_hash`.
+- Record write identity with `data.recorded_by`, `data.recorded_via`, and `data.import_session`.
+- Use `correction` events for field-level fixes and `confirm` events to mark reviewed entries as accepted.
+
 ## Jurisdiction notes
 
 The IRS treats crypto as property (Notice 2014-21, Rev. Rul. 2019-24). For a frequent trader:
