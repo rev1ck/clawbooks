@@ -13,7 +13,7 @@ Your agent reads the data, reads the policy, and does the accounting.
 
 No rules engine. No SDK. No framework.
 
-**Two source files. Zero runtime dependencies.**
+**Tiny core. Zero runtime dependencies.**
 
 Bring CSVs, Stripe exports, exchange fills, receipts, PDFs, or copied transaction text.
 Your agent reads the source, applies `policy.md`, writes normalized ledger events into clawbooks, and produces statements, summaries, and audit packs from the same record.
@@ -204,7 +204,7 @@ clawbooks init --example complex
 clawbooks init --books .books-personal
 
 # Write events
-clawbooks record '{"source":"stripe","type":"payment","data":{"amount":500,"currency":"USD"}}'
+clawbooks record '{"source":"stripe","type":"income","data":{"amount":500,"currency":"USD"}}'
 cat events.jsonl | clawbooks batch
 
 # Read events
@@ -251,7 +251,7 @@ This is the core command. It prints a `context` envelope for the requested perio
 
 - `metadata` explains the requested and effective window, whether a snapshot was used, and what kinds of records are present
 - `instructions` tells the agent how to interpret snapshot plus events
-- `summary` provides a compact management view before the event rows, including movement summary, settlement summary, review counts, and top categories
+- `summary` provides a compact management view before the event rows, including movement summary, settlement summary, receivable/payable candidates, review materiality, correction summary, and top categories
 - `snapshot` is the starting state, when available
 - `events` contains compact event rows by default; use `--verbose` for full raw records
 
@@ -274,36 +274,20 @@ $ clawbooks context 2026-03
   "currencies": ["USD"]
 }
 </metadata>
-
-<instructions>
-Read the policy first.
-Use the policy path in metadata or run `clawbooks policy` to inspect the full policy text.
-Treat the snapshot as the starting state.
-Apply the events block on top of that snapshot.
-</instructions>
-
 <summary>
 {
   "counts": {"events":47,"non_meta_events":47,"review_items":2},
   "movement_summary": {"operating_inflows":1700,"operating_outflows":55,"operating_net":1645,"tax_outflows":0,"documents_issued":0,"documents_received":0},
-  "cash_flow": {"inflows":1700,"outflows":-55,"net":1645},
-  "top_operating_expenses": [{"category":"hosting","total":40},{"category":"bank_fees","total":15}]
+  "settlement_summary": {"tracked_documents":12,"open":3,"partial":2,"settled":7,"overpaid":0},
+  "receivable_candidates": {"count":2,"open_total":1800},
+  "review_materiality": {"by_confidence":{"unclear":{"count":1,"magnitude":75}}},
+  "correction_summary": {"correction_events":1,"confirm_events":2}
 }
 </summary>
-
-<snapshot as_of="2026-03-01T00:00:00.000Z">
-{"balances":{"USD":45000},"movement_summary":{"operating_inflows":1700,"operating_outflows":475,"operating_net":1225,"tax_outflows":0,"documents_issued":0,"documents_received":0}}
-</snapshot>
-
-<events count="47" after="2026-03-01T00:00:00.000Z" before="2026-03-31T23:59:59.999Z" verbosity="compact">
-{"ts":"...","source":"stripe","type":"income","category":"service_revenue","description":"Acme invoice","amount":500,"currency":"USD","confidence":"clear","id":"..."}
-{"ts":"...","source":"bank","type":"fee","category":"bank_fees","description":"Monthly fee","amount":-55,"currency":"USD","confidence":"clear","id":"..."}
-...
-</events>
 </context>
 ```
 
-Use `clawbooks context 2026-03 --verbose` when the compact envelope is not enough.
+Use `clawbooks context 2026-03 --verbose` when you need the full internal summary and raw event payloads. The default compact view is intended to be high-signal rather than exhaustive.
 
 ## Policy checks and document views
 
@@ -387,7 +371,12 @@ Generate a folder of standard-format files for accountants or auditors:
 clawbooks pack 2026-01/2026-12-31 --out ./annual-pack
 ```
 
-This produces `general_ledger.csv`, `summary.json`, `asset_register.csv`, `reclassifications.csv`, `verify.json`, and a copy of `policy.md`.
+This produces `general_ledger.csv`, `summary.json`, `verify.json`, and a copy of `policy.md`, plus additional files when relevant:
+- `asset_register.csv`
+- `reclassifications.csv`
+- `corrections.csv`
+- `confirmations.csv`
+
 The output is assistive. It gives an accountant structured working material, not a pretend finished report.
 
 ## Agent setup
