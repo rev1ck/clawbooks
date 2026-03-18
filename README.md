@@ -261,10 +261,15 @@ $ clawbooks context 2026-03
 <context schema="clawbooks.context.v2">
 <metadata>
 {
+  "schema_version": "clawbooks.context.v2",
+  "generated_at": "2026-03-31T12:00:00.000Z",
+  "ledger_path": "/path/to/.books/ledger.jsonl",
+  "policy_path": "/path/to/.books/policy.md",
   "requested_window": {"after":"2026-03-01T00:00:00.000Z","before":"2026-03-31T23:59:59.999Z"},
   "effective_window": {"after":"2026-03-01T00:00:00.000Z","before":"2026-03-31T23:59:59.999Z"},
   "snapshot": {"used": true, "ts":"2026-03-01T00:00:00.000Z"},
   "event_count": 47,
+  "event_types": ["expense", "fee", "income"],
   "sources": ["bank", "stripe"],
   "currencies": ["USD"]
 }
