@@ -111,6 +111,7 @@ test -f "$BOOKS_ROOT/.books/ledger.jsonl" || { echo "FAIL: init should create le
 test -f "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init should create policy.md"; exit 1; }
 grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy should contain usable policy content"; exit 1; }
 grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
+grep -q "Next agent step: run \`clawbooks doctor\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to doctor"; exit 1; }
 
 # Test 2: init is idempotent
 (cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output2.txt"
@@ -169,6 +170,7 @@ EMPTY_DIR3="$(mktemp -d)"
 WHERE_JSON="$EMPTY_DIR3/where.json"
 (cd "$EMPTY_DIR3" && $CLI where 2>&1) > "$WHERE_JSON"
 grep -q '"resolution": "default:.books"' "$WHERE_JSON" || { echo "FAIL: where should report default resolution"; exit 1; }
+grep -q '"next_command": "clawbooks doctor"' "$WHERE_JSON" || { echo "FAIL: where should point to doctor"; exit 1; }
 
 DOCTOR_JSON="$EMPTY_DIR3/doctor.json"
 (cd "$EMPTY_DIR3" && $CLI doctor 2>&1) > "$DOCTOR_JSON"

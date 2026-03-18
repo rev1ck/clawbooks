@@ -54,6 +54,10 @@ function stdin(): Promise<string> {
 
 const HELP = `clawbooks — accounting by inference, not by engine.
 
+First run:
+  Start with \`clawbooks doctor\`.
+  Agents should run \`clawbooks doctor\` before importing or reporting.
+
 Setup:
   init    [--books DIR] [--example NAME]
                                     Create a books directory with ledger + starter policy
@@ -141,6 +145,7 @@ Books resolution order:
 
 Bootstrap behavior:
   New books are seeded with a policy example. Edit policy.md to match your entity and jurisdiction.
+  After setup, run \`clawbooks doctor\` for full bootstrap guidance.
 
 Examples:
   clawbooks where
@@ -167,13 +172,12 @@ Multi-entity:
   CLAWBOOKS_BOOKS=.books-personal clawbooks summary 2026-03
 
 Agent workflow:
-  1. Agent runs: clawbooks context 2026-03
-  2. Agent reads the output and the policy
-  3. Agent reasons over it and answers your question
-  4. Agent runs: clawbooks record '...' to write new events
-  5. Agent runs: clawbooks verify + reconcile to check integrity
-  6. Agent runs: clawbooks summary to generate reports
-  7. Agent runs: clawbooks snapshot --save to persist period summary
+  1. Agent runs: clawbooks doctor
+  2. Agent reads program.md + policy.md
+  3. Agent imports with clawbooks record/batch
+  4. Agent runs: clawbooks verify + reconcile to check integrity
+  5. Agent runs: clawbooks summary + context to produce reports
+  6. Agent runs: clawbooks snapshot --save to persist period summary
 `;
 
 // --- Dispatch ---

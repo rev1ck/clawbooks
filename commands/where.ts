@@ -20,5 +20,9 @@ export function cmdWhere(params: {
       policy: existsSync(params.policyPath),
     },
     available_examples: availablePolicyExamples(),
+    guidance: {
+      next_command: "clawbooks doctor",
+      note: "For full bootstrap guidance, run `clawbooks doctor`.",
+    },
   }, null, 2));
 }
