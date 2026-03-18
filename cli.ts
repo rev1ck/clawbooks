@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { ensureBooksDir, requireBooks, resolveBooks } from "./books.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdWhere } from "./commands/where.js";
+import { cmdDoctor } from "./commands/doctor.js";
 import { cmdDocuments } from "./commands/documents.js";
 import { cmdSummary } from "./commands/summary.js";
 import { cmdContext } from "./commands/context.js";
@@ -65,6 +66,8 @@ Data commands:
   documents [period] [flags]  Show neutral document settlement and aging views
   policy  [lint] [--path]     Print policy.md, lint it, or print the path
   where                       Show resolved books, ledger, and policy paths
+  doctor                      Show setup diagnostics + agent bootstrap guidance
+  quickstart                  Alias for doctor with first-run guidance
   stats                       Ledger summary
 
 Analysis commands:
@@ -141,6 +144,8 @@ Bootstrap behavior:
 
 Examples:
   clawbooks where
+  clawbooks doctor
+  clawbooks quickstart
   clawbooks init
   clawbooks init --list-examples
   clawbooks init --example simple
@@ -208,6 +213,14 @@ switch (cmd) {
     policyPath: POLICY,
     resolution: BOOKS_RESOLUTION,
   }); break;
+  case "doctor":
+  case "quickstart":
+    cmdDoctor({
+      booksDir: BOOKS_DIR,
+      ledgerPath: LEDGER,
+      policyPath: POLICY,
+      resolution: BOOKS_RESOLUTION,
+    }); break;
   case "stats":     cmdStats(LEDGER); break;
   case "verify":    cmdVerify(args, LEDGER); break;
   case "reconcile": cmdReconcile(args, LEDGER); break;

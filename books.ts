@@ -8,6 +8,10 @@ const POLICY_EXAMPLES = {
   simple: resolve(MODULE_DIR, "..", "policy-simple.md.example"),
   complex: resolve(MODULE_DIR, "..", "policy-complex.md.example"),
 } as const;
+const SUPPORT_FILES = {
+  program: resolve(MODULE_DIR, "..", "program.md"),
+  agentBootstrap: resolve(MODULE_DIR, "..", "agent-bootstrap.md"),
+} as const;
 
 export type PolicyExampleName = keyof typeof POLICY_EXAMPLES;
 export type BooksResolution =
@@ -65,6 +69,24 @@ Add any filing, tax, capitalization, or review rules the agent should follow.
 
 export function availablePolicyExamples(): PolicyExampleName[] {
   return (Object.keys(POLICY_EXAMPLES) as PolicyExampleName[]).filter((name) => existsSync(POLICY_EXAMPLES[name]));
+}
+
+export function packageSupportFiles(): {
+  program_path: string;
+  agent_bootstrap_path: string;
+  exists: {
+    program: boolean;
+    agent_bootstrap: boolean;
+  };
+} {
+  return {
+    program_path: SUPPORT_FILES.program,
+    agent_bootstrap_path: SUPPORT_FILES.agentBootstrap,
+    exists: {
+      program: existsSync(SUPPORT_FILES.program),
+      agent_bootstrap: existsSync(SUPPORT_FILES.agentBootstrap),
+    },
+  };
 }
 
 export function resolvePolicySeed(example?: string): { source: "example" | "fallback"; exampleName: string; path?: string } {

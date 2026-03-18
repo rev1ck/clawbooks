@@ -397,12 +397,61 @@ Use `clawbooks where` before major imports or reporting runs to confirm:
 - which policy path the agent should inspect
 - which resolution rule won
 
+When starting a new agent session, run `clawbooks doctor` first. It is the bootstrap command for:
+- resolved books paths
+- packaged support-file paths
+- initialization status
+- recommended next commands
+
+`clawbooks quickstart` is an alias for the same output if you want a more agent-facing name.
+
+### For coding agents
+
+When using clawbooks from a generic coding agent session:
+
+1. Run `clawbooks doctor`
+2. Read `program.md`
+3. Read `clawbooks policy`
+4. Inspect the raw source files
+5. Import normalized ledger events with provenance fields
+6. Run `clawbooks verify` and `clawbooks reconcile` if source totals are available
+7. Run `clawbooks summary <period>` and `clawbooks context <period>`
+8. Answer according to `policy.md`, not according to hardcoded accounting assumptions
+
+### Behavior under uncertainty
+
+If `clawbooks doctor` reports the policy as `starter` or otherwise provisional:
+
+1. You may still proceed with import and reporting.
+2. You must say that the current outputs are provisional because the policy is still generic or incomplete.
+3. You must call out the most material assumptions you made.
+4. You must flag uncertain classifications or missing confirmations when they could change the answer.
+5. You should suggest the minimum policy refinements that would improve future runs.
+
+If material ambiguity remains after import:
+
+1. Record events with appropriate confidence fields rather than pretending certainty.
+2. Use `clawbooks verify`, `clawbooks reconcile`, `clawbooks review`, and `clawbooks documents` to narrow uncertainty.
+3. Surface unresolved issues clearly in the final answer.
+
+The agent does not need to stop and ask before every uncertain classification, but it must comment when using a generic starter policy or when material ambiguity remains.
+
+If no books exist yet:
+
+1. Run `clawbooks init`
+2. Edit `.books/policy.md`
+3. Re-run `clawbooks doctor`
+
+The npm package ships `agent-bootstrap.md` as a reusable system-prompt / `AGENTS.md` snippet for generic coding agents.
+
 ## Quick reference
 
 ```
 clawbooks init [--books DIR] [--example NAME]
                                      # create .books/ with ledger + seeded policy
 clawbooks where                      # show resolved books, ledger, and policy paths
+clawbooks doctor                     # setup diagnostics + agent bootstrap guidance
+clawbooks quickstart                 # alias for doctor
 clawbooks record <json>             # append one event
 clawbooks batch                     # append JSONL from stdin
 clawbooks log [--last N]            # view recent events

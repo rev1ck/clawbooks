@@ -186,6 +186,7 @@ clawbooks where
 ```
 
 Use `clawbooks where` to confirm which books directory, ledger, and policy the CLI resolved before importing or reporting.
+Use `clawbooks doctor` when starting in an unfamiliar folder or global-install workflow. It reports the resolved books paths, packaged support files, and the recommended next steps for an agent.
 
 ## How it works
 
@@ -197,6 +198,8 @@ The important command is `clawbooks context`: it prints a compact working envelo
 ```bash
 # Bootstrap
 clawbooks where
+clawbooks doctor
+clawbooks quickstart
 clawbooks init
 clawbooks init --list-examples
 clawbooks init --example simple
@@ -383,11 +386,33 @@ The output is assistive. It gives an accountant structured working material, not
 
 Point your agent at `program.md` for instructions on how to use clawbooks.
 
+For first-run or global-install workflows, start with:
+
+```bash
+clawbooks doctor
+```
+
+This prints:
+- resolved books / ledger / policy paths
+- whether books are initialized yet
+- packaged support files such as `program.md` and `agent-bootstrap.md`
+- policy readiness signals such as `missing`, `starter`, or `customized`
+- recommended next commands for the agent
+- a reusable bootstrap prompt
+
+If `doctor` reports the policy as `starter`, the agent should still be able to proceed, but it should explicitly say that the resulting financials are provisional and point out the main assumptions or classifications that need refinement.
+
 - **Claude Code**: add `Read program.md in the clawbooks directory for financial record-keeping instructions.`
-- **Codex**: add the same pointer in `AGENTS.md` or your system prompt
+- **Any coding agent**: add the same pointer in `AGENTS.md`, your harness instructions, or use the packaged `agent-bootstrap.md`
 - **Any shell-capable agent**: clawbooks prints structured text for the agent to read and reason over
 
-The npm package includes `program.md` and the policy examples, so this workflow also works from a global install.
+The npm package includes `program.md`, `agent-bootstrap.md`, and the policy examples, so this workflow also works from a global install.
+
+Example bootstrap prompt:
+
+```text
+Use clawbooks in this folder. Run `clawbooks doctor`, read `program.md` and `policy.md`, inspect the source files, import normalized events with provenance fields, then run `clawbooks verify`, `clawbooks summary`, and `clawbooks context` for the requested period before answering.
+```
 
 ## Packaging
 
@@ -407,6 +432,7 @@ This writes a temporary scoped package into `.dist/scoped-cli` for inspection or
 cli.ts                  CLI commands
 ledger.ts               JSONL read/write/filter
 program.md              Agent instructions
+agent-bootstrap.md      Reusable agent bootstrap prompt
 .books/
   policy.md             Your accounting rules (seeded, then edited)
   ledger.jsonl          Your financial events (append-only)

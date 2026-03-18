@@ -169,6 +169,18 @@ EMPTY_DIR3="$(mktemp -d)"
 WHERE_JSON="$EMPTY_DIR3/where.json"
 (cd "$EMPTY_DIR3" && $CLI where 2>&1) > "$WHERE_JSON"
 grep -q '"resolution": "default:.books"' "$WHERE_JSON" || { echo "FAIL: where should report default resolution"; exit 1; }
+
+DOCTOR_JSON="$EMPTY_DIR3/doctor.json"
+(cd "$EMPTY_DIR3" && $CLI doctor 2>&1) > "$DOCTOR_JSON"
+grep -q '"command": "doctor"' "$DOCTOR_JSON" || { echo "FAIL: doctor should identify itself"; exit 1; }
+grep -q '"program_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report program path"; exit 1; }
+grep -q '"agent_bootstrap_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report agent bootstrap path"; exit 1; }
+grep -q '"readiness": "missing"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report missing policy readiness"; exit 1; }
+grep -q 'Run `clawbooks init`' "$DOCTOR_JSON" || { echo "FAIL: doctor should recommend init when books are missing"; exit 1; }
+
+QUICKSTART_JSON="$EMPTY_DIR3/quickstart.json"
+(cd "$EMPTY_DIR3" && $CLI quickstart 2>&1) > "$QUICKSTART_JSON"
+grep -q '"command": "doctor"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should alias doctor"; exit 1; }
 rm -rf "$EMPTY_DIR3"
 
 # Test 9: --books flag works for commands
@@ -242,6 +254,12 @@ POLICY_LINT="$DOCS_ROOT/policy-lint.json"
 (cd "$DOCS_ROOT" && $CLI policy lint 2>&1) > "$POLICY_LINT"
 grep -q '"status": "warn"' "$POLICY_LINT" || { echo "FAIL: policy lint should warn on incomplete policy"; exit 1; }
 grep -q 'Revenue recognition' "$POLICY_LINT" || { echo "FAIL: policy lint should suggest missing sections"; exit 1; }
+
+DOCTOR_DOCS="$DOCS_ROOT/doctor.json"
+(cd "$DOCS_ROOT" && $CLI doctor 2>&1) > "$DOCTOR_DOCS"
+grep -q '"readiness": "starter"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report starter policy readiness"; exit 1; }
+grep -q '"provisional_outputs": true' "$DOCTOR_DOCS" || { echo "FAIL: doctor should mark starter policy outputs as provisional"; exit 1; }
+grep -q 'outputs as provisional' "$DOCTOR_DOCS" || { echo "FAIL: doctor should instruct agent to treat starter outputs as provisional"; exit 1; }
 
 DOCUMENTS_JSON="$DOCS_ROOT/documents.json"
 (cd "$DOCS_ROOT" && $CLI documents 2026-03 --as-of 2026-03-31T00:00:00.000Z 2>&1) > "$DOCUMENTS_JSON"
