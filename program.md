@@ -34,6 +34,7 @@ Required fields: `source`, `type`, `data` (any object). `ts` is optional (defaul
 The CLI enforces sign convention automatically for known types:
 - **Outflow** (stored negative): `expense`, `tax_payment`, `owner_draw`, `fee`, `dividend`, `loan_repayment`, `refund`, `transfer_out`, `withdrawal`
 - **Inflow** (stored positive): `income`, `deposit`, `equity_injection`, `loan_received`, `transfer_in`, `refund_received`, `grant`
+- **Document types** (sign based on `data.direction`): `invoice`, `bill` — `issued` stores positive, `received` stores negative. If direction is absent, sign is not enforced
 - **Meta types** (sign not enforced): `snapshot`, `reclassify`, `opening_balance`
 - **Asset events** (sign not enforced): `disposal`, `write_off`, `impairment`
 - **Unknown types**: the CLI warns and preserves the sign you provide. Use critical thinking — if a new type represents money leaving the business, pass a negative amount. `verify` will flag sign inconsistencies.
@@ -63,6 +64,40 @@ Convention:
 - `data.account`: identifies which account (e.g., `checking`, `credit_card`)
 - One event per account/currency pair
 - `opening_balance` is exempt from currency requirement and sign enforcement
+
+## Invoices and bills
+
+Record financial documents — invoices issued to customers, invoices or bills received from vendors — as they occur:
+
+Document issued (receivable):
+```bash
+clawbooks record '{"source":"manual","type":"invoice","data":{"amount":5000,"currency":"USD","direction":"issued","counterparty":"acme","invoice_id":"INV-001","due_date":"2026-04-15","description":"March consulting"}}'
+```
+
+Document received (payable):
+```bash
+clawbooks record '{"source":"manual","type":"invoice","data":{"amount":2000,"currency":"USD","direction":"received","counterparty":"aws","invoice_id":"BILL-001","due_date":"2026-04-01","description":"March hosting"}}'
+```
+
+Some jurisdictions distinguish "invoice" (issued) from "bill" (received). Both type names are supported and treated identically by the CLI. Use whichever term fits your jurisdiction. The `data.direction` field ("issued" or "received") is the authoritative indicator of whether a document represents a receivable or payable.
+
+When payment is received or made, reference the document:
+```bash
+clawbooks record '{"source":"bank","type":"income","data":{"amount":5000,"currency":"USD","counterparty":"acme","invoice_id":"INV-001","description":"Payment for INV-001"}}'
+```
+
+How documents affect reports depends on the accounting basis declared in policy.md:
+
+- **Accrual basis**: the document is the recognition event. Revenue or expense is recognized when the document is recorded. The subsequent cash event settles the receivable/payable.
+- **Cash basis**: the document is a tracking event. Revenue or expense is recognized when the corresponding cash event hits the ledger. Documents inform the agent about expected future flows.
+
+The agent matches cash events to documents by `invoice_id` and reports:
+- Outstanding receivables (issued documents without matching cash-in)
+- Outstanding payables (received documents without matching cash-out)
+- Aging by due_date
+- Partial and over-payments
+
+The CLI stores all events and surfaces them in context. The agent applies policy.md to decide what's recognized and how to present reports.
 
 ## Importing messy data (CSVs, statements, etc.)
 
@@ -124,8 +159,8 @@ When asked for a P&L, tax summary, balance, etc.:
 
 1. **Start with `summary`**, not `context`. `clawbooks summary <period>` gives you pre-computed aggregates without loading every event into context.
 2. Map the output to the requested report:
-   - **P&L**: prefer `operating_pnl`, `report_sections`, and `report_totals` over raw signed movement totals
-   - **Balance Sheet**: `cash_flow.net` + opening balance (from snapshot or opening_balance events) → Assets. Capitalized assets from `clawbooks assets`. Equity = Assets - Liabilities
+   - **P&L**: use `movement_summary`, `report_sections`, and `report_totals` as raw aggregates. Apply the accounting basis from policy.md to determine what counts as recognized revenue and expenses. Under accrual, include document events; under cash, include only cash events.
+   - **Balance Sheet**: `cash_flow.net` + opening balance (from snapshot or opening_balance events) → Assets. Capitalized assets from `clawbooks assets`. Equity = Assets - Liabilities. Under accrual, include outstanding receivables and payables from document events.
    - **Cash Flow Statement**: Map categories to Operating/Investing/Financing per policy
 3. Only use `clawbooks context <period>` when you need to drill into individual events — e.g., investigating a specific transaction, answering "what was that $500 charge?", or debugging a reconciliation mismatch.
 4. For large ledgers, use `clawbooks pack <period>` to generate a full audit pack (CSVs + JSON) that you or an accountant can review outside the agent.
@@ -141,6 +176,16 @@ After importing data from any source:
 5. Review `potential_duplicates` in verify output — same source/date/amount/description
 6. If `RECONCILED`, proceed. If `MISMATCH`, investigate and fix before generating reports
 7. Include the verify hash in report footers for audit trail
+
+### Document-to-payment reconciliation
+
+After importing bank data, the agent should:
+1. Match cash-in events to issued documents by invoice_id
+2. Match cash-out events to received documents by invoice_id
+3. Report unmatched issued documents as outstanding receivables
+4. Report unmatched received documents as outstanding payables
+5. Flag partial payments and overpayments
+6. Under accrual basis, verify that recognized revenue/expenses have corresponding documents
 
 ## Classification review
 
@@ -167,7 +212,7 @@ clawbooks snapshot 2026-03 --save   # compute and save to ledger
 clawbooks snapshot 2026-03          # compute and print (no save)
 ```
 
-The snapshot includes balances by currency, totals by category, and report-oriented sections for operating P&L, tax, capex, owner distributions, and transfers.
+The snapshot includes balances by currency, totals by category, and report-oriented sections for movement summary, tax, capex, owner distributions, transfers, and documents.
 
 ## Compacting the ledger
 
@@ -221,8 +266,8 @@ clawbooks verify --balance N --opening-balance N
 clawbooks reconcile [period] -S     # compare expected vs actual totals
 clawbooks reconcile -S --gaps       # also detect date gaps >7 days
 clawbooks review [period]           # show items needing classification review
-clawbooks summary [period]          # aggregates + report-oriented sections for management reporting
-clawbooks snapshot [period] [--save] # compute period snapshot (balances, P&L, capex, transfers)
+clawbooks summary [period]          # aggregates + movement summary + report sections
+clawbooks snapshot [period] [--save] # compute period snapshot (balances, movement summary, sections)
 clawbooks assets [--category C] [--life N] [--as-of DATE]
                                      # asset register (capitalize-flag based)
 clawbooks compact <period>           # archive old events, shrink ledger

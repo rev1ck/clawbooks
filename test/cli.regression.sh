@@ -69,9 +69,9 @@ function assert(condition, message) {
   }
 }
 
-assert(JSON.stringify(summaryShortcut.operating_pnl) === JSON.stringify(summaryExplicit.operating_pnl), "month shortcut should match explicit date range");
-assert(summaryShortcut.operating_pnl.revenue === 500, "operating revenue should be 500");
-assert(summaryShortcut.operating_pnl.expenses === 120, "capex should be excluded from operating expenses");
+assert(JSON.stringify(summaryShortcut.movement_summary) === JSON.stringify(summaryExplicit.movement_summary), "month shortcut should match explicit date range");
+assert(summaryShortcut.movement_summary.operating_inflows === 500, "operating inflows should be 500");
+assert(summaryShortcut.movement_summary.operating_outflows === 120, "capex should be excluded from operating outflows");
 assert(summaryShortcut.report_totals.capex === 300, "capex total should be separated");
 assert(summaryShortcut.report_totals.internal_transfers_in === 250, "transfer in should be separated");
 assert(summaryShortcut.report_totals.owner_distributions === 50, "owner draws should be separated");
@@ -80,10 +80,10 @@ assert(verify.balance_check.net_movement === 280, "net movement should be 280");
 assert(verify.balance_check.closing_balance === 1280, "closing balance should be 1280");
 assert(stats.first === "2026-01-01T00:00:00.000Z", "stats.first should be chronological");
 assert(stats.last === "2026-02-20T00:00:00.000Z", "stats.last should be chronological");
-assert(snapshot.operating_pnl.revenue === 500, "snapshot should include operating pnl");
+assert(snapshot.movement_summary.operating_inflows === 500, "snapshot should include operating movement summary");
 assert(!Object.prototype.hasOwnProperty.call(snapshot, "pnl"), "snapshot should not expose legacy raw pnl");
 assert(snapshot.report_totals.capex === 300, "snapshot should include capex totals");
-assert(packedSummary.operating_pnl.net_before_tax === 380, "pack summary should include operating pnl");
+assert(packedSummary.movement_summary.operating_net === 380, "pack summary should include operating movement summary");
 assert(contextCompact.includes('verbosity="compact"'), "default context should be compact");
 assert(contextVerbose.includes('verbosity="full"'), "verbose context should show full payloads");
 assert(!contextCompact.includes("<policy>"), "default context should not inline policy");

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "node:fs";
 import {
   computeId,
   readAll,
@@ -28,6 +28,7 @@ const META_TYPES = new Set(["snapshot", "reclassify", "opening_balance"]);
 const ASSET_EVENT_TYPES = new Set(["disposal", "write_off", "impairment"]);
 const TRANSFER_TYPES = new Set(["transfer_in", "transfer_out"]);
 const OPERATING_INCOME_TYPES = new Set(["income", "refund_received", "grant"]);
+const DOCUMENT_TYPES = new Set(["invoice", "bill"]);
 
 // --- Helpers ---
 
@@ -146,7 +147,8 @@ function sortByTimestamp(events: LedgerEvent[]): LedgerEvent[] {
   return [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
 }
 
-function classifyFlowSection(event: LedgerEvent): "operating_income" | "operating_expense" | "tax" | "capex" | "owner" | "transfer" | "other" {
+function classifyEventSection(event: LedgerEvent): "operating_income" | "operating_expense" | "tax" | "capex" | "owner" | "transfer" | "document" | "other" {
+  if (DOCUMENT_TYPES.has(event.type)) return "document";
   if (event.type === "tax_payment") return "tax";
   if (event.type === "owner_draw") return "owner";
   if (TRANSFER_TYPES.has(event.type)) return "transfer";
@@ -176,6 +178,7 @@ function buildReportingSections(events: LedgerEvent[]) {
     capex: {},
     owner_distributions: {},
     internal_transfers: {},
+    documents: {},
     other: {},
   };
 
@@ -187,6 +190,8 @@ function buildReportingSections(events: LedgerEvent[]) {
     owner_distributions: 0,
     internal_transfers_in: 0,
     internal_transfers_out: 0,
+    documents_issued: 0,
+    documents_received: 0,
     other: 0,
   };
 
@@ -195,7 +200,7 @@ function buildReportingSections(events: LedgerEvent[]) {
     const amount = signedAmount(e);
     if (amount === undefined) continue;
     const category = String(e.data.category ?? e.type);
-    const section = classifyFlowSection(e);
+    const section = classifyEventSection(e);
     const magnitude = Math.abs(amount);
 
     if (section === "operating_income") {
@@ -217,6 +222,10 @@ function buildReportingSections(events: LedgerEvent[]) {
       sections.internal_transfers[category] = round2((sections.internal_transfers[category] ?? 0) + amount);
       if (amount >= 0) totals.internal_transfers_in = round2(totals.internal_transfers_in + amount);
       else totals.internal_transfers_out = round2(totals.internal_transfers_out + magnitude);
+    } else if (section === "document") {
+      sections.documents[category] = round2((sections.documents[category] ?? 0) + amount);
+      if (amount >= 0) totals.documents_issued = round2(totals.documents_issued + amount);
+      else totals.documents_received = round2(totals.documents_received + magnitude);
     } else {
       sections.other[category] = round2((sections.other[category] ?? 0) + amount);
       totals.other = round2(totals.other + amount);
@@ -226,12 +235,13 @@ function buildReportingSections(events: LedgerEvent[]) {
   return {
     sections,
     totals,
-    operating_pnl: {
-      revenue: round2(totals.operating_income),
-      expenses: round2(totals.operating_expenses),
-      net_before_tax: round2(totals.operating_income - totals.operating_expenses),
-      tax: round2(totals.tax),
-      net_after_tax: round2(totals.operating_income - totals.operating_expenses - totals.tax),
+    movement_summary: {
+      operating_inflows: round2(totals.operating_income),
+      operating_outflows: round2(totals.operating_expenses),
+      operating_net: round2(totals.operating_income - totals.operating_expenses),
+      tax_outflows: round2(totals.tax),
+      documents_issued: round2(totals.documents_issued),
+      documents_received: round2(totals.documents_received),
     },
   };
 }
@@ -250,7 +260,7 @@ function buildCompactContextSummary(summary: ReturnType<typeof buildContextSumma
       non_meta_events: summary.non_meta_event_count,
       review_items: summary.review.needs_review,
     },
-    operating_pnl: summary.operating_pnl,
+    movement_summary: summary.movement_summary,
     cash_flow: summary.cash_flow,
     report_totals: summary.report_totals,
     top_operating_expenses: topCategoryEntries(summary.report_sections.operating_expenses),
@@ -365,7 +375,7 @@ function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
       needs_review: needsReview,
       by_confidence: confidence,
     },
-    operating_pnl: reporting.operating_pnl,
+    movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
   };
@@ -375,6 +385,16 @@ function enforceSign(type: string, data: Record<string, unknown>): void {
   if (data.amount === undefined) return;
   const amount = Number(data.amount);
   if (isNaN(amount)) return;
+  if (DOCUMENT_TYPES.has(type)) {
+    // Sign based on direction: issued = positive (owed to you), received = negative (you owe)
+    if (data.direction === "issued") {
+      data.amount = Math.abs(amount);
+    } else if (data.direction === "received") {
+      data.amount = -Math.abs(amount);
+    }
+    // If direction is absent, don't enforce sign — agent classifies per policy
+    return;
+  }
   if (OUTFLOW_TYPES.has(type)) {
     data.amount = -Math.abs(amount);
   } else if (INFLOW_TYPES.has(type)) {
@@ -437,6 +457,13 @@ async function cmdBatch() {
   let recorded = 0, skipped = 0, errors = 0;
   const errorMessages: string[] = [];
 
+  // Read ledger once, keep in-memory ID set + running prev hash
+  if (!existsSync(LEDGER)) writeFileSync(LEDGER, "", "utf-8");
+  const existingLines = readFileSync(LEDGER, "utf-8").split("\n").filter(Boolean);
+  const existingIds = new Set(existingLines.map((l) => (JSON.parse(l) as LedgerEvent).id));
+  let prevHash = existingLines.length > 0 ? hashLine(existingLines[existingLines.length - 1]) : "genesis";
+  const newLines: string[] = [];
+
   for (const line of input.split("\n")) {
     if (!line.trim()) continue;
     try {
@@ -456,12 +483,30 @@ async function cmdBatch() {
         id: computeId(data, { source, type, ts }),
         prev: "",
       };
-      if (append(LEDGER, event)) recorded++;
-      else skipped++;
+
+      if (existingIds.has(event.id)) {
+        skipped++;
+        continue;
+      }
+
+      if (!META_TYPES.has(event.type) && event.data.currency === undefined) {
+        throw new Error(`Event missing data.currency (type: ${event.type}, id: ${event.id})`);
+      }
+
+      event.prev = prevHash;
+      const jsonLine = JSON.stringify(event);
+      prevHash = hashLine(jsonLine);
+      newLines.push(jsonLine);
+      existingIds.add(event.id);
+      recorded++;
     } catch (err) {
       errors++;
       errorMessages.push(String((err as Error).message));
     }
+  }
+
+  if (newLines.length > 0) {
+    appendFileSync(LEDGER, newLines.join("\n") + "\n", "utf-8");
   }
 
   if (errorMessages.length > 0) {
@@ -547,7 +592,7 @@ function cmdContext(args: string[]) {
     console.log(`This is the compact context view. Use --verbose to print the full raw event payloads.`);
   }
   console.log(`Reclassify events are append-only corrections; use them when interpreting categories.`);
-  console.log(`Amounts are signed: inflows are positive, outflows are negative for known flow types.`);
+  console.log(`Amounts are signed: inflows are positive, outflows are negative for known flow types. Document types (invoice, bill) are signed by direction.`);
   console.log(`</instructions>`);
   console.log();
 
@@ -676,6 +721,12 @@ function cmdVerify(args: string[]) {
         issues.push(`Event ${e.id}: outflow type "${e.type}" has positive amount ${amount}`);
       } else if (INFLOW_TYPES.has(e.type) && amount < 0) {
         issues.push(`Event ${e.id}: inflow type "${e.type}" has negative amount ${amount}`);
+      } else if (DOCUMENT_TYPES.has(e.type)) {
+        if (e.data.direction === "issued" && amount < 0) {
+          issues.push(`Event ${e.id}: document type "${e.type}" with direction "issued" has negative amount ${amount}`);
+        } else if (e.data.direction === "received" && amount > 0) {
+          issues.push(`Event ${e.id}: document type "${e.type}" with direction "received" has positive amount ${amount}`);
+        }
       }
     }
 
@@ -974,7 +1025,7 @@ function cmdSummary(args: string[]) {
       outflows: round2(outflows),
       net: round2(inflows + outflows),
     },
-    operating_pnl: reporting.operating_pnl,
+    movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
   }, null, 2));
@@ -1016,7 +1067,7 @@ function cmdSnapshot(args: string[]) {
     event_count: eventCount,
     balances,
     by_category: byCategory,
-    operating_pnl: reporting.operating_pnl,
+    movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
   };
@@ -1215,7 +1266,7 @@ function cmdCompact(args: string[]) {
     event_count: eventCount,
     balances,
     by_category: byCategory,
-    operating_pnl: reporting.operating_pnl,
+    movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
     compacted_from: archive.length,
@@ -1334,7 +1385,7 @@ function cmdPack(args: string[]) {
     by_category: byCategory,
     by_currency: byCurrency,
     cash_flow: { inflows, outflows, net: round2(inflows + outflows) },
-    operating_pnl: reporting.operating_pnl,
+    movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
   }, null, 2) + "\n", "utf-8");
@@ -1464,7 +1515,7 @@ Analysis commands:
   reconcile [period] --source S [flags]    Compare expected vs actual totals
   review    [period] [--source S]          Show items needing classification review
   summary   [period] [--source S]          Pre-computed aggregates for reports
-  snapshot  [period] [--save]              Compute period snapshot (balances, P&L)
+  snapshot  [period] [--save]              Compute period snapshot (balances, movement summary)
   assets    [--category C] [--life N] [--as-of DATE]
                                            Asset register (capitalize-flag based) with depreciation
   compact   <period> [--archive PATH]     Archive old events, save snapshot, shrink ledger
@@ -1499,6 +1550,7 @@ Period format:
 Sign convention:
   Outflow types (expense, tax_payment, owner_draw, fee): amount stored as negative
   Inflow types: amount stored as positive
+  Document types (invoice, bill): sign based on data.direction (issued=positive, received=negative)
   Meta types (snapshot, reclassify, opening_balance): sign not enforced
   Asset events (disposal, write_off, impairment): sign not enforced
 

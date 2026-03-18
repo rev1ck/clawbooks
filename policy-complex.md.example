@@ -53,6 +53,20 @@ The IRS treats crypto as property (Notice 2014-21, Rev. Rul. 2019-24). For a fre
 
 This operation is frequent trading. **All crypto gains and losses are short-term unless a specific lot has been held over 1 year.**
 
+## Revenue recognition
+
+Accrual basis. Revenue is recognized when an invoice is issued or when a trading position is closed — not when cash is received. Expenses are recognized when a bill or invoice is received. Cash events settle the resulting receivable or payable.
+
+For trading operations, realized P&L on each trade is recognized at the time the position is closed. Unrealized P&L on open positions is reported separately and is not recognized until settlement.
+
+## Accounts receivable / payable
+
+- Issued invoices and documents create receivables (AR)
+- Received invoices and bills create payables (AP)
+- The agent matches cash events to documents by invoice_id to track settlement
+- Outstanding documents older than 90 days should be flagged for review
+- For exchange settlements, the exchange event is the recognition event; the on-chain transfer settles it
+
 ## Cost basis
 
 FIFO (First In, First Out) for all assets across all venues.

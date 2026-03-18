@@ -221,14 +221,14 @@ Apply the events block on top of that snapshot.
 <summary>
 {
   "counts": {"events":47,"non_meta_events":47,"review_items":2},
-  "operating_pnl": {"revenue":1700,"expenses":55,"net_before_tax":1645,"tax":0,"net_after_tax":1645},
+  "movement_summary": {"operating_inflows":1700,"operating_outflows":55,"operating_net":1645,"tax_outflows":0,"documents_issued":0,"documents_received":0},
   "cash_flow": {"inflows":1700,"outflows":-55,"net":1645},
   "top_operating_expenses": [{"category":"hosting","total":40},{"category":"bank_fees","total":15}]
 }
 </summary>
 
 <snapshot as_of="2026-03-01T00:00:00.000Z">
-{"balances":{"USD":45000},"operating_pnl":{"revenue":1700,"expenses":475,"net_before_tax":1225,"tax":0,"net_after_tax":1225}}
+{"balances":{"USD":45000},"movement_summary":{"operating_inflows":1700,"operating_outflows":475,"operating_net":1225,"tax_outflows":0,"documents_issued":0,"documents_received":0}}
 </snapshot>
 
 <events count="47" after="2026-03-01T00:00:00.000Z" before="2026-03-31T23:59:59.999Z" verbosity="compact">

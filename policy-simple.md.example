@@ -39,7 +39,8 @@ Base currency: USD.
 
 ## Revenue recognition
 
-Income is recognized when payment is received, not when invoiced.
+Cash basis. Income is recognized when payment is received, not when invoiced. Invoices and bills are tracking events — they do not create recognized revenue or expenses.
+
 All client payments are service revenue.
 Crypto payments are converted to USD at the spot price at time of receipt and recognized as service revenue at that USD amount. The crypto itself is not held as an investment — convert or record the USD equivalent immediately.
 
@@ -71,6 +72,8 @@ When Stripe settles to Chase, do not double-count. The Stripe payout and the Cha
 
 Net 30 terms. Invoices over 45 days past due should be flagged.
 Deposits (typically 50% upfront) are recognized as revenue when received, not deferred.
+
+Record invoices when issued using `type: "invoice"` with `data.direction: "issued"`. These are tracking events under cash basis — they inform the agent about expected future payments but do not create recognized revenue. Match payments to invoices by `invoice_id`.
 
 ## Reports
 

@@ -8,7 +8,7 @@ entity:
   entity_type: company
   jurisdiction: Replace with your jurisdiction
 reporting:
-  basis: cash
+  basis: cash          # or: accrual — drives how the agent interprets events
   financial_year_end: 12-31
   base_currency: USD
 tax:
@@ -41,7 +41,12 @@ The CLI aggregates per-currency; the agent handles cross-currency reporting and 
 
 ## Revenue recognition
 
-Cash basis. Income is recognized when payment is received.
+Basis is declared in the structured hints above.
+
+- **Cash basis**: revenue recognized when payment received. Expenses recognized when paid. Invoices and bills are tracking events.
+- **Accrual basis**: revenue recognized when invoice issued. Expenses recognized when invoice/bill received. Cash events settle the resulting receivable or payable.
+
+The agent reads the basis from policy and applies it when building P&L, balance sheet, and cash flow statements from clawbooks context.
 
 ## Expense classification
 
@@ -71,6 +76,17 @@ See capitalization policy below. Hardware, equipment, and other tangible assets 
 - **Disposal**: record a `disposal` event with `data.asset_id` and `data.proceeds`. Gain/loss = proceeds - net book value
 - **Write-off**: record a `write_off` event with `data.asset_id`. Remaining NBV is a loss
 - **Impairment**: record an `impairment` event with `data.asset_id` and `data.impairment_amount`. Reduces carrying value
+
+## Accounts receivable / payable
+
+Record invoices and bills when issued or received.
+
+- Under accrual basis, these are recognition events that create AR/AP
+- Under cash basis, these are tracking events for expected future flows
+- The direction field (issued/received) or type name (invoice/bill) determines AR vs AP per jurisdiction conventions declared here
+- Outstanding documents older than 90 days should be flagged for review
+
+Cross-reference documents against cash events by invoice_id to track settlement.
 
 ## Tax jurisdiction
 
