@@ -25,7 +25,6 @@
   "scripts": {
     "build": "tsc && chmod 755 build/cli.js",
     "test": "npm run build && /usr/bin/bash test/cli.regression.sh",
-    "postinstall": "node -e \"const v=require('./package.json').version; console.log('clawbooks v'+v+' installed'); console.log('Run: clawbooks quickstart | clawbooks doctor | clawbooks --help');\"",
     "prepare": "npm run build",
     "prepack": "npm run build",
     "scoped:prepare": "npm run build && node scripts/prepare-scoped-package.mjs",
