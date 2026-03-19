@@ -26,7 +26,13 @@ Before doing any of that in an unfamiliar repository or books directory, run:
 clawbooks quickstart
 ```
 
-`quickstart` tells you which `program.md`, `policy.md`, and `ledger.jsonl` are in scope for the current books and summarizes the reporting surface available from the CLI.
+`quickstart` tells you which `program.md`, `policy.md`, `event-schema.md`, and `ledger.jsonl` are in scope for the current books and summarizes the reporting surface available from the CLI.
+
+The three core documents have distinct roles:
+
+- `program.md`: how to operate clawbooks
+- `policy.md`: how the current entity should be accounted for
+- `event-schema.md`: how facts should be encoded in the ledger
 
 ## Writing events
 
@@ -38,6 +44,9 @@ clawbooks record '{"source":"stripe","type":"income","data":{"amount":500,"curre
 
 Required fields: `source`, `type`, `data` (any object). `ts` is optional (defaults to now).
 `data.currency` is **required** — the ledger rejects events without it (except snapshots, reclassify, opening_balance, correction, and confirm).
+
+Before inventing a new event shape or extending an existing one, read `event-schema.md`.
+It defines the stable ledger envelope, canonical field meanings, and the rule that `data` is an open extension object.
 
 The CLI enforces sign convention automatically for known types:
 - **Outflow** (stored negative): `expense`, `tax_payment`, `owner_draw`, `fee`, `dividend`, `loan_repayment`, `refund`, `transfer_out`, `withdrawal`
@@ -52,6 +61,9 @@ The ledger is hash-chained — each event's `prev` field links to the previous e
 ## Recommended data conventions
 
 These are conventions, not engine rules. The CLI stores them; the policy tells the agent when to use them.
+
+`event-schema.md` is the authority for event encoding.
+`policy.md` is the authority for interpretation, recognition, categorization, and reporting.
 
 ### Cost basis / lot tracking
 
@@ -161,7 +173,7 @@ The CLI stores all events and surfaces them in context. The agent applies policy
 When the user gives you a CSV or other raw financial data:
 
 1. Record opening balances first (if not already present)
-2. Read the raw data and the policy (`clawbooks policy` or the file at `CLAWBOOKS_POLICY`)
+2. Read the raw data, the policy (`clawbooks policy` or the file at `CLAWBOOKS_POLICY`), and `event-schema.md`
 3. If the source is newest-first or otherwise unsorted, normalize it into chronological order before importing
 4. Capture the source's opening balance, closing balance, expected row count, total debits, and total credits before writing events
 5. Parse each row into a ledger event, classifying per the policy
@@ -172,6 +184,12 @@ When the user gives you a CSV or other raw financial data:
 10. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
 
 You are the parser. There is no import tool. You read the data and write the events.
+
+When in doubt:
+
+- use canonical field names from `event-schema.md` where they fit
+- preserve unrecognized but useful source-specific detail inside `data`
+- store references and hashes, not bulky source documents, in the ledger
 
 This workflow applies to statement-like sources generally: bank statements, card exports, processor settlements, exchange cash reports, and other row-based account activity exports.
 
@@ -420,11 +438,12 @@ When using clawbooks from a generic coding agent session:
 1. Run `clawbooks quickstart`
 2. Read `program.md`
 3. Read `policy.md`
-4. Inspect the raw source files
-5. Import normalized ledger events with provenance fields
-6. Run `clawbooks verify` and `clawbooks reconcile` if source totals are available
-7. Run `clawbooks summary <period>` and `clawbooks context <period>`
-8. Answer according to `policy.md`, not according to hardcoded accounting assumptions
+4. Read `event-schema.md` before introducing or changing event shapes
+5. Inspect the raw source files
+6. Import normalized ledger events with provenance fields
+7. Run `clawbooks verify` and `clawbooks reconcile` if source totals are available
+8. Run `clawbooks summary <period>` and `clawbooks context <period>`
+9. Answer according to `policy.md`, not according to hardcoded accounting assumptions
 
 ### Behavior under uncertainty
 

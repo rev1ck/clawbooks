@@ -39,6 +39,9 @@ Base currency: USD.
 
 ## Data conventions
 
+Event encoding should follow `docs/event-schema.md`.
+This policy defines how to interpret events, not a separate storage schema.
+
 - Use `data.ref`, `data.source_doc`, and `data.source_row` during imports so each ledger event can be traced back to the source statement or receipt.
 - Use `data.recorded_by` or `data.import_session` when an agent writes events in bulk.
 - Use `correction` events for non-category fixes and `confirm` events when reviewed items become accepted.

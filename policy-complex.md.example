@@ -47,6 +47,9 @@ Fiscal year: January 1 to December 31.
 
 ## Data conventions
 
+Event encoding should follow `docs/event-schema.md`.
+This policy defines how to interpret events, not a separate storage schema.
+
 - Lot tracking uses `data.lot_id`, `data.lot_ref`, and `data.disposition_lots`; the agent assigns these during ingestion per FIFO policy.
 - Store transaction-time valuation facts using `data.price_usd`, `data.fx_rate`, `data.price_source`, and `data.valuation_ts`.
 - Record provenance with `data.ref`, `data.source_doc`, `data.source_row`, and `data.source_hash`.

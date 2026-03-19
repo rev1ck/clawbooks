@@ -76,6 +76,34 @@ Historical ledger rows MUST preserve these invariants:
 - new `type` values MAY be introduced
 - existing field meanings MUST remain stable
 
+## `data` Extensibility
+
+`data` is an open extension object.
+
+This is a deliberate design choice.
+
+- The schema MUST NOT assume a closed universal payload grammar inside `data`.
+- Agents and operators MAY store additional source-specific, workflow-specific, jurisdiction-specific, or domain-specific fields inside `data`.
+- Future tooling SHOULD preserve unrecognized `data.*` fields rather than dropping or rewriting them.
+- Unknown `data.*` fields MUST NOT by themselves make an event invalid.
+
+The schema is therefore prescriptive about:
+
+- the stable top-level envelope
+- the meaning of canonical fields already documented here
+- the sign semantics of canonical event types
+
+The schema is intentionally not prescriptive about:
+
+- every possible `data.*` field that may appear
+- a closed per-type payload schema for all future use cases
+
+In practice, this means:
+
+- use canonical fields when they fit
+- add extra `data.*` fields when needed
+- do not repurpose existing canonical field names to mean something else
+
 ## Stored Form vs Input Form
 
 The canonical schema describes the stored ledger row, not the loosest accepted input.
@@ -219,6 +247,22 @@ These fields are conventions, not universal requirements.
 | `recorded_by` | human or agent identity |
 | `recorded_via` | import path or tool |
 | `import_session` | batch or run identifier |
+
+The schema does not require a single provenance strategy.
+
+For source linkage, operators MAY store:
+
+- a filename or logical document id in `source_doc`
+- a row or record reference in `source_row`
+- a cryptographic fingerprint in `source_hash`
+- a URL, storage key, or external document locator in `source_doc` or another custom `data.*` field
+- free-form extraction notes in `provenance`
+
+The canonical recommendation is:
+
+- keep the ledger row small
+- store durable references and fingerprints in the ledger
+- keep bulky source files outside the ledger itself
 
 ### Documents
 

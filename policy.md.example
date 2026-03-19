@@ -41,6 +41,9 @@ The CLI aggregates per-currency; the agent handles cross-currency reporting and 
 
 ## Data conventions
 
+Event encoding should follow `docs/event-schema.md`.
+This policy defines how to interpret events, not a separate storage schema.
+
 Use these conventions when relevant:
 
 - **Lot tracking**: `data.lot_id`, `data.lot_ref`, `data.disposition_lots`
