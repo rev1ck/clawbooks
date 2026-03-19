@@ -60,9 +60,13 @@ Clawbooks has 3 core parts:
   policy.md     Accounting policy for the current books
   ledger.jsonl  Append-only financial record
 
+Core reference:
+  event-schema.md  Canonical event envelope and schema evolution rules
+
 Mental model:
   The agent reads program.md to learn how clawbooks works.
   The agent reads policy.md to learn how the current books should be accounted for.
+  The agent reads event-schema.md to learn the canonical event envelope.
   The ledger stores facts. The agent does the accounting.
 
 First run:
@@ -88,6 +92,8 @@ Inspect:
   log     [flags]             Print ledger events
   stats                       Ledger summary
   policy  [lint] [--path]     Print policy.md, lint it, or print the path
+  policy  --list-examples     List bundled policy examples
+  policy  --example NAME      Print a bundled policy example without overwriting policy.md
   documents [period] [flags]  Show neutral document settlement and aging views
 
 Report and analyze:
@@ -108,6 +114,7 @@ Maintenance:
 Important terms:
   program.md   Operating manual for the agent
   policy.md    Accounting policy for the current books
+  event-schema.md Canonical event envelope and schema evolution reference
   ledger.jsonl Append-only financial record
   snapshot     Saved derived checkpoint in the ledger; not the source of truth
 
@@ -116,6 +123,8 @@ Quick examples:
   clawbooks doctor
   clawbooks init
   clawbooks policy --path
+  clawbooks policy --list-examples
+  clawbooks policy --example simple
   clawbooks summary 2026-03
   clawbooks context 2026-03 --include-policy
   clawbooks verify 2026-03 --balance 153869.05 --currency USD

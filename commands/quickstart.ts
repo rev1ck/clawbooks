@@ -43,15 +43,15 @@ export function cmdQuickstart(params: {
         provisional_outputs: policyReadiness.provisional,
         reason: policyReadiness.reason,
       },
+      event_schema: {
+        role: "Canonical event envelope and schema evolution reference",
+        path: support.event_schema_path,
+        exists: support.exists.event_schema,
+      },
       ledger: {
         role: "Append-only financial record for the current books",
         path: params.ledgerPath,
         exists: ledgerExists,
-      },
-      event_schema: {
-        role: "Canonical event envelope, field conventions, and event types",
-        path: support.event_schema_path,
-        exists: support.exists.event_schema,
       },
     },
     current_books: {
@@ -68,6 +68,7 @@ export function cmdQuickstart(params: {
       "Run `clawbooks quickstart` when entering an unfamiliar repository or books directory.",
       "Read program.md.",
       "Read policy.md.",
+      "Read event-schema.md if you are importing or revising event shapes.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
       "Run `clawbooks verify` and `clawbooks reconcile` after imports when source totals are available.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
@@ -116,6 +117,7 @@ export function cmdQuickstart(params: {
     ] : [
       "Read program.md and the policy path shown above before reporting.",
       "Use the policy file above as the authority for basis, recognition, categorization, and review rules.",
+      "Use the event schema path above when adding new event shapes or upgrading import conventions.",
       "Run `clawbooks doctor` when you want mechanical setup diagnostics rather than workflow guidance.",
     ],
   }, null, 2));

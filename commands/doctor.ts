@@ -149,6 +149,9 @@ export function cmdDoctor(params: {
     suggested_next_command: "clawbooks quickstart",
     notes: [
       "Use `clawbooks quickstart` for workflow guidance, core file roles, and reporting capabilities.",
+      support.exists.event_schema
+        ? "Schema reference present: event-schema.md is packaged and available."
+        : "Schema reference missing: event-schema.md was not found in package support files.",
       !ledgerExists && !policyExists
         ? "No books were found yet. Run `clawbooks init` or point clawbooks at an existing books directory."
         : "Books were resolved successfully. Review the policy diagnostics above before relying on outputs.",

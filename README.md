@@ -16,6 +16,10 @@ It gives the agent three things:
 - `policy.md`: the accounting policy for the current books
 - `ledger.jsonl`: the append-only financial record
 
+And one core reference:
+
+- `docs/event-schema.md`: the canonical event envelope and schema evolution guide
+
 The ledger stores facts. The policy states the accounting rules. The agent does the reasoning.
 
 No rules engine. No SDK. No framework.
@@ -161,7 +165,7 @@ Each line is a canonical event envelope with:
 - deterministic id
 - previous-line hash pointer
 
-See [docs/event-schema.md](/home/martin/projects/clawbooks/docs/event-schema.md) for the schema and field conventions.
+See [docs/event-schema.md](./docs/event-schema.md) for the schema and field conventions.
 
 ## Commands By Job
 
@@ -175,6 +179,8 @@ clawbooks init
 clawbooks init --list-examples
 clawbooks init --example simple
 clawbooks init --example complex
+clawbooks policy --list-examples
+clawbooks policy --example simple
 ```
 
 Import:
@@ -247,7 +253,7 @@ Use `clawbooks where` to confirm the resolved books directory, ledger path, and 
 
 ## Event Schema
 
-The canonical event contract is documented in [docs/event-schema.md](/home/martin/projects/clawbooks/docs/event-schema.md).
+The canonical event contract is documented in [docs/event-schema.md](./docs/event-schema.md).
 
 That document defines:
 

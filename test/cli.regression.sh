@@ -36,6 +36,8 @@ CONTEXT_COMPACT="$ROOT/context-compact.txt"
 CONTEXT_VERBOSE="$ROOT/context-verbose.txt"
 CONTEXT_WITH_POLICY="$ROOT/context-with-policy.txt"
 POLICY_PATH_OUT="$ROOT/policy-path.txt"
+POLICY_EXAMPLES_JSON="$ROOT/policy-examples.json"
+POLICY_SIMPLE_EXAMPLE="$ROOT/policy-simple-example.md"
 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js summary 2026-02 > "$SUMMARY_SHORTCUT"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js summary --after 2026-02-01 --before 2026-02-28 > "$SUMMARY_EXPLICIT"
@@ -46,12 +48,14 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 2026-02 --verbose > "$CONTEXT_VERBOSE"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 2026-02 --include-policy > "$CONTEXT_WITH_POLICY"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --path > "$POLICY_PATH_OUT"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --list-examples > "$POLICY_EXAMPLES_JSON"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --example simple > "$POLICY_SIMPLE_EXAMPLE"
 mkdir -p "$PACK_DIR"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js pack 2026-02 --out "$PACK_DIR" >/dev/null
 
-node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY"
+node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE"
 const fs = require("fs");
-const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath] = process.argv.slice(2);
+const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath, policyExamplesPath, policySimpleExamplePath] = process.argv.slice(2);
 const summaryShortcut = JSON.parse(fs.readFileSync(summaryShortcutPath, "utf8"));
 const summaryExplicit = JSON.parse(fs.readFileSync(summaryExplicitPath, "utf8"));
 const verify = JSON.parse(fs.readFileSync(verifyPath, "utf8"));
@@ -89,6 +93,8 @@ assert(contextVerbose.includes('verbosity="full"'), "verbose context should show
 assert(!contextCompact.includes("<policy>"), "default context should not inline policy");
 assert(contextWithPolicy.includes("<policy>"), "context --include-policy should inline policy");
 assert(policyPathOut === expectedPolicyPath, "policy --path should print the configured policy path");
+assert(fs.readFileSync(policyExamplesPath, "utf8").includes('"name": "simple"'), "policy --list-examples should include simple");
+assert(fs.readFileSync(policySimpleExamplePath, "utf8").includes("Example Studio LLC"), "policy --example simple should print the bundled simple policy");
 assert(contextCompact.includes('"top_operating_expenses"'), "default context summary should use compact high-signal shape");
 assert(contextVerbose.includes('"by_type"'), "verbose context should include the full internal summary");
 console.log("cli.regression.sh: ok");
