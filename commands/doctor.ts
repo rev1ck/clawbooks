@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { availablePolicyExamples, packageSupportFiles } from "../books.js";
+import { latestSnapshot, readAll } from "../ledger.js";
+import { META_TYPES } from "../event-types.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
+import { analyzeVerification } from "./verify.js";
 
 export function cmdDoctor(params: {
   booksDir: string | null;
@@ -19,6 +22,57 @@ export function cmdDoctor(params: {
   const canRead = ledgerExists;
   const canWrite = booksExist || params.booksDir !== null || params.resolution === "env:file" || params.resolution === "cwd:bare";
   const hasSupportFiles = support.exists.program && support.exists.agent_bootstrap && support.exists.event_schema;
+  const all = ledgerExists ? readAll(params.ledgerPath) : [];
+  const verification = ledgerExists ? analyzeVerification(all) : null;
+  const nonMetaEvents = all.filter((e) => !META_TYPES.has(e.type));
+  const openingBalances = all.filter((e) => e.type === "opening_balance");
+  const snapshots = all.filter((e) => e.type === "snapshot");
+  const latestLedgerSnapshot = latestSnapshot(all);
+  const latestEventTs = all.length > 0 ? all[all.length - 1].ts : null;
+  const latestNonSnapshotTs = [...all].reverse().find((e) => e.type !== "snapshot")?.ts ?? null;
+  const provenanceKeys = ["ref", "source_doc", "source_row", "source_hash", "provenance"];
+  const eventsWithoutProvenance = nonMetaEvents.filter((e) => provenanceKeys.every((key) => e.data[key] === undefined));
+  const duplicateGroups = verification?.potential_duplicates?.length ?? 0;
+  const chainValid = verification?.chain_valid ?? null;
+  const issueCount = verification?.issues.length ?? 0;
+
+  let snapshotStatus = "none";
+  let snapshotReason = "No snapshot events found in the ledger.";
+  if (latestLedgerSnapshot && latestNonSnapshotTs) {
+    if (latestLedgerSnapshot.ts >= latestNonSnapshotTs) {
+      snapshotStatus = "current";
+      snapshotReason = "A snapshot exists at or after the latest non-snapshot event.";
+    } else {
+      snapshotStatus = "stale";
+      snapshotReason = "A snapshot exists, but newer non-snapshot events were added after it.";
+    }
+  } else if (latestLedgerSnapshot) {
+    snapshotStatus = "current";
+    snapshotReason = "Only snapshot events are present in the ledger.";
+  }
+
+  const operatorWarnings: string[] = [];
+  if (ledgerExists && all.length === 0) {
+    operatorWarnings.push("Ledger exists but is empty. Import events before relying on reports.");
+  }
+  if (ledgerExists && nonMetaEvents.length > 0 && openingBalances.length === 0 && snapshots.length === 0) {
+    operatorWarnings.push("No opening_balance or snapshot events found. Balance-sheet style outputs may be incomplete.");
+  }
+  if (eventsWithoutProvenance.length > 0) {
+    operatorWarnings.push(`${eventsWithoutProvenance.length} non-meta events have no provenance fields such as data.ref, data.source_doc, or data.source_hash.`);
+  }
+  if (duplicateGroups > 0) {
+    operatorWarnings.push(`${duplicateGroups} potential duplicate group(s) detected. Review verify output before reporting.`);
+  }
+  if (policyReadiness.provisional) {
+    operatorWarnings.push("Policy is still starter/provisional. External outputs should be marked provisional.");
+  }
+  if (snapshotStatus === "none" && nonMetaEvents.length >= 25) {
+    operatorWarnings.push("No snapshot has been saved yet. Consider `clawbooks snapshot <period> --save` after a reporting run.");
+  }
+  if (snapshotStatus === "stale") {
+    operatorWarnings.push("Snapshot is stale relative to the latest ledger activity.");
+  }
 
   console.log(JSON.stringify({
     command: "doctor",
@@ -44,6 +98,25 @@ export function cmdDoctor(params: {
       can_write_books: canWrite,
       support_files_present: hasSupportFiles,
     },
+    ledger_health: !ledgerExists ? {
+      present: false,
+    } : {
+      present: true,
+      event_count: all.length,
+      non_meta_event_count: nonMetaEvents.length,
+      chain_valid: chainValid,
+      verification_issue_count: issueCount,
+      potential_duplicate_groups: duplicateGroups,
+      hash: verification?.hash,
+      first_event_ts: all[0]?.ts ?? null,
+      last_event_ts: latestEventTs,
+    },
+    snapshot_health: {
+      count: snapshots.length,
+      latest_ts: latestLedgerSnapshot?.ts ?? null,
+      status: snapshotStatus,
+      reason: snapshotReason,
+    },
     diagnostics: {
       policy: {
         path: params.policyPath,
@@ -61,6 +134,16 @@ export function cmdDoctor(params: {
         program: support.exists.program ? "ok" : "missing",
         agent_bootstrap: support.exists.agent_bootstrap ? "ok" : "missing",
         event_schema: support.exists.event_schema ? "ok" : "missing",
+      },
+      ledger_integrity: verification ? {
+        chain_valid: verification.chain_valid,
+        issue_count: verification.issues.length,
+        top_issues: verification.issues.slice(0, 5),
+        potential_duplicates: verification.potential_duplicates ?? [],
+      } : null,
+      operator_mistakes: {
+        warning_count: operatorWarnings.length,
+        warnings: operatorWarnings,
       },
     },
     suggested_next_command: "clawbooks quickstart",

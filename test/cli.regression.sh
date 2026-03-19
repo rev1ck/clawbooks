@@ -181,6 +181,9 @@ grep -q '"agent_bootstrap_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should r
 grep -q '"event_schema_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report event schema path"; exit 1; }
 grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_JSON" || { echo "FAIL: doctor should point users to quickstart"; exit 1; }
 grep -q '"readiness": "missing"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report missing policy readiness"; exit 1; }
+grep -q '"ledger_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include ledger health"; exit 1; }
+grep -q '"snapshot_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include snapshot health"; exit 1; }
+grep -q '"operator_mistakes"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include operator warnings"; exit 1; }
 grep -q 'Run `clawbooks init`' "$DOCTOR_JSON" || { echo "FAIL: doctor should recommend init when books are missing"; exit 1; }
 
 QUICKSTART_JSON="$EMPTY_DIR3/quickstart.json"
@@ -269,6 +272,10 @@ grep -q '"readiness": "starter"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should r
 grep -q '"provisional_outputs": true' "$DOCTOR_DOCS" || { echo "FAIL: doctor should mark starter policy outputs as provisional"; exit 1; }
 grep -q '"policy_path": ".*/.books/policy.md"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should include resolved policy path"; exit 1; }
 grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should direct agents to quickstart"; exit 1; }
+grep -q '"chain_valid": false' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report broken ledger chains"; exit 1; }
+grep -q '"status": "none"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report missing snapshots"; exit 1; }
+grep -q 'No opening_balance or snapshot events found' "$DOCTOR_DOCS" || { echo "FAIL: doctor should warn when opening balances and snapshots are missing"; exit 1; }
+grep -q 'no provenance fields' "$DOCTOR_DOCS" || { echo "FAIL: doctor should warn about missing provenance"; exit 1; }
 
 QUICKSTART_DOCS="$DOCS_ROOT/quickstart.json"
 (cd "$DOCS_ROOT" && $CLI quickstart 2>&1) > "$QUICKSTART_DOCS"

@@ -1,15 +1,19 @@
 import { createHash } from "node:crypto";
-import { filter, hashLine, readAll } from "../ledger.js";
+import { filter, hashLine, readAll, type LedgerEvent } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { round2, sortByTimestamp } from "../reporting.js";
 import { ASSET_EVENT_TYPES, DOCUMENT_TYPES, INFLOW_TYPES, META_TYPES, OUTFLOW_TYPES } from "../event-types.js";
 
-export function cmdVerify(args: string[], ledgerPath: string) {
-  const f = flags(args);
-  const { after, before } = periodFromArgs(args);
-  const all = readAll(ledgerPath);
-  const isFiltered = !!(f.source || after || before);
-  const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
+export function analyzeVerification(all: LedgerEvent[], opts?: {
+  source?: string;
+  after?: string;
+  before?: string;
+  balance?: number;
+  openingBalance?: number;
+  currency?: string;
+}) {
+  const isFiltered = !!(opts?.source || opts?.after || opts?.before);
+  const events = sortByTimestamp(filter(all, { after: opts?.after, before: opts?.before, source: opts?.source }));
 
   const byType: Record<string, { count: number; total: number }> = {};
   const bySource: Record<string, { count: number; total: number }> = {};
@@ -67,19 +71,19 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     if (!e.data || typeof e.data !== "object") issues.push(`Event ${e.id}: missing or invalid data`);
   }
 
-  let chain_valid = true;
+  let chainValid = true;
   if (!isFiltered) {
     for (let i = 0; i < all.length; i++) {
       if (i === 0) {
         if (all[i].prev !== "genesis") {
           issues.push(`Event ${all[i].id}: first event prev should be "genesis", got "${all[i].prev}"`);
-          chain_valid = false;
+          chainValid = false;
         }
       } else {
         const expectedPrev = hashLine(JSON.stringify({ ...all[i - 1] }));
         if (all[i].prev !== expectedPrev) {
           issues.push(`Event ${all[i].id}: chain break at index ${i} (expected prev ${expectedPrev}, got ${all[i].prev})`);
-          chain_valid = false;
+          chainValid = false;
         }
       }
     }
@@ -94,15 +98,16 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     net_movement?: number;
     closing_balance?: number;
   } | undefined;
-  if (f.balance !== undefined) {
-    const expectedBalance = parseFloat(f.balance);
-    const openingBalance = f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : 0;
+
+  if (opts?.balance !== undefined) {
+    const expectedBalance = opts.balance;
+    const openingBalance = opts.openingBalance ?? 0;
     let movement = 0;
     for (const e of events) {
       if (META_TYPES.has(e.type)) continue;
       const amount = Number(e.data.amount);
       if (isNaN(amount)) continue;
-      if (f.currency && String(e.data.currency) !== f.currency) continue;
+      if (opts.currency && String(e.data.currency) !== opts.currency) continue;
       movement = round2(movement + amount);
     }
     const actual = round2(openingBalance + movement);
@@ -112,7 +117,7 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     if (!matches) {
       issues.push(`Balance mismatch: expected ${expectedBalance}, got ${actual} (difference: ${difference})`);
     }
-    if (f["opening-balance"] !== undefined) {
+    if (opts.openingBalance !== undefined) {
       Object.assign(balanceCheck, {
         opening_balance: openingBalance,
         net_movement: movement,
@@ -134,17 +139,33 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     .update(events.map((e) => e.id).join(","))
     .digest("hex");
 
-  console.log(JSON.stringify({
+  return {
     event_count: events.length,
     by_type: byType,
     by_source: bySource,
     by_currency: byCurrency,
     debits: round2(debits),
     credits: round2(credits),
-    ...(isFiltered ? {} : { chain_valid }),
+    ...(isFiltered ? {} : { chain_valid: chainValid }),
     ...(balanceCheck ? { balance_check: balanceCheck } : {}),
     ...(potentialDuplicates.length > 0 ? { potential_duplicates: potentialDuplicates } : {}),
     hash,
     issues,
-  }, null, 2));
+  };
+}
+
+export function cmdVerify(args: string[], ledgerPath: string) {
+  const f = flags(args);
+  const { after, before } = periodFromArgs(args);
+  const all = readAll(ledgerPath);
+  const report = analyzeVerification(all, {
+    source: f.source,
+    after,
+    before,
+    balance: f.balance !== undefined ? parseFloat(f.balance) : undefined,
+    openingBalance: f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : undefined,
+    currency: f.currency,
+  });
+
+  console.log(JSON.stringify(report, null, 2));
 }
