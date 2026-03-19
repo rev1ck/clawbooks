@@ -2,36 +2,40 @@
 
 This document defines the canonical ledger event schema for `clawbooks`.
 
-It is intended to be stable for a very long time.
-
-The core design is deliberately small:
+The schema is designed for historical ledger stability:
 
 - the ledger stores facts
 - `policy.md` defines interpretation
-- the agent/operator decides how raw source material becomes events
+- the agent/operator decides how raw material becomes events
 
-The schema is therefore optimized for durability, auditability, and extensibility rather than for embedding accounting judgment into the storage layer.
+The storage layer should remain small, durable, and additive.
 
-## Design Principles
+## Status
 
-The event schema should preserve these principles:
+- Status: canonical
+- Scope: stored ledger rows in `ledger.jsonl`
+- Goal: preserve long-term readability and auditability of historical ledgers
+
+## Normative Terms
+
+The words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are used in their plain normative sense.
+
+## Design Rules
 
 1. Facts before interpretation.
-   Store what happened, when it happened, where it came from, and how it was traced. Put recognition rules, policy choices, and reporting judgment in `policy.md`, not in the ledger format itself.
+   The ledger MUST store what happened, when, from where, and with what traceability. Recognition policy, tax treatment, reporting basis, and classification judgment belong in `policy.md`.
 2. Append-only history.
-   Do not rewrite prior rows in place. Use follow-up audit events such as `reclassify`, `correction`, and `confirm`.
-3. Stable envelope, flexible payload.
-   The top-level event shape should remain small and stable. Most evolution should happen inside `data`.
-4. Deterministic identity.
-   The same normalized fact should produce the same event identity.
-5. Explicit provenance.
-   Events should be traceable back to source records, documents, statements, or operator actions.
-6. Additive evolution.
-   New optional fields and new event types are fine. Reinterpreting old fields or overloading existing meanings is not.
+   Historical rows MUST NOT be rewritten in place. Later reinterpretation SHOULD be represented by follow-up audit events.
+3. Stable envelope.
+   The top-level row shape MUST remain stable. Most schema evolution SHOULD occur inside `data`.
+4. Additive evolution.
+   New optional fields and new event types MAY be added. Existing field meanings MUST NOT be repurposed.
+5. Deterministic identity.
+   The same normalized fact SHOULD produce the same event identity.
 
 ## Canonical Stored Row
 
-Each ledger row is one JSON object.
+Each stored row MUST be a JSON object with this top-level envelope:
 
 ```json
 {
@@ -42,8 +46,7 @@ Each ledger row is one JSON object.
     "amount": -125.50,
     "currency": "USD",
     "description": "AWS March hosting",
-    "category": "hosting",
-    "confidence": "clear"
+    "category": "hosting"
   },
   "id": "generated-by-cli",
   "prev": "generated-by-cli"
@@ -52,37 +55,47 @@ Each ledger row is one JSON object.
 
 ## Top-Level Fields
 
-| Field | Required in stored row | Required on input | Meaning |
+| Field | Stored row | Input | Meaning |
 |---|---:|---:|---|
-| `ts` | yes | no | ISO-8601 event timestamp. If omitted on input, the CLI uses current time. |
-| `source` | yes | yes | Source system, workflow, or operator channel, e.g. `bank`, `stripe`, `manual`, `review`. |
-| `type` | yes | yes | Event class, e.g. `expense`, `income`, `invoice`, `snapshot`. |
-| `data` | yes | yes | Event payload. This is where most schema evolution should occur. |
-| `id` | yes | no | Deterministic id derived by the CLI from `source`, `type`, `ts`, and `data`. |
-| `prev` | yes | no | Hash-chain pointer to the previous stored row. `genesis` for the first row. |
+| `ts` | required | optional | ISO-8601 event timestamp |
+| `source` | required | required | source system, workflow, or operator channel |
+| `type` | required | required | event class |
+| `data` | required | required | event payload object |
+| `id` | required | optional | deterministic id generated from `source`, `type`, `ts`, and `data` |
+| `prev` | required | optional | hash-chain pointer to the previous stored row |
 
 ## Invariants
 
-These are the invariants the canonical schema assumes:
+Historical ledger rows MUST preserve these invariants:
 
-- The ledger row envelope is stable: `ts`, `source`, `type`, `data`, `id`, `prev`.
-- `data` is always an object.
-- `id` is deterministic for a normalized event.
-- `prev` links rows into an append-only chain.
-- Unknown additional fields may exist inside `data`.
-- New event `type` values may be added over time.
-- Existing field meanings should not be repurposed.
+- the top-level envelope is exactly `ts`, `source`, `type`, `data`, `id`, `prev`
+- `data` is an object
+- `id` identifies the normalized event
+- `prev` links the append-only chain
+- additional fields MAY exist inside `data`
+- new `type` values MAY be introduced
+- existing field meanings MUST remain stable
 
-## Minimum Requirements
+## Stored Form vs Input Form
 
-For most financial movement events, provide at least:
+The canonical schema describes the stored ledger row, not the loosest accepted input.
+
+In the current CLI:
+
+- `ts` MAY be omitted on input and default to now
+- `id` and `prev` SHOULD NOT be supplied by the caller
+- sign MAY be normalized on input for known event types
+
+## Minimum Event Requirements
+
+For most financial movement events, callers SHOULD provide at least:
 
 - `source`
 - `type`
 - `data.amount`
 - `data.currency`
 
-Current CLI exceptions to the currency requirement:
+Current CLI currency exemptions:
 
 - `snapshot`
 - `reclassify`
@@ -98,18 +111,6 @@ Recommended baseline fields for most money-movement events:
 - `data.category`
 - `data.confidence`
 - `data.ref`
-
-## Stored Form vs Input Form
-
-The CLI may accept a slightly looser input shape than the stored ledger row.
-
-Examples:
-
-- `ts` may be omitted on input and will default to now.
-- `id` and `prev` should not normally be supplied by the caller.
-- some signs are normalized by the CLI according to event type conventions.
-
-When this document says "canonical", it refers to the stored ledger form, not merely the most convenient ingestion payload.
 
 ## Sign Conventions
 
@@ -142,14 +143,14 @@ The CLI normalizes sign for known types.
 - `invoice`
 - `bill`
 
-For documents, sign is derived from `data.direction`:
+For document types:
 
-- `issued` => positive
-- `received` => negative
+- `data.direction = "issued"` => positive
+- `data.direction = "received"` => negative
 
 If `data.direction` is absent, sign is not enforced.
 
-### Sign not enforced by the CLI
+### Sign not enforced
 
 - `snapshot`
 - `reclassify`
@@ -161,131 +162,102 @@ If `data.direction` is absent, sign is not enforced.
 - `impairment`
 - unknown custom types
 
-If you introduce a custom type, store the sign you actually mean and make the policy explicit.
+Custom types MAY be introduced, but their sign semantics SHOULD be made explicit in `policy.md`.
 
-## Event Type Taxonomy
+## Canonical Type Families
 
-The ledger format does not require a closed list of event types, but the following classes are canonical within clawbooks today.
+The schema does not require a closed type list, but these families are canonical in clawbooks.
 
-### Core cash and financing types
+### Cash and financing
 
-| Type | Typical meaning |
-|---|---|
-| `income` | Operating inflow or recognized revenue cash-in |
-| `expense` | Operating outflow |
-| `fee` | Bank or processor fee |
-| `tax_payment` | Tax remittance |
-| `deposit` | Cash deposited into an account |
-| `withdrawal` | Cash withdrawn from an account |
-| `transfer_in` | Internal transfer into an account |
-| `transfer_out` | Internal transfer out of an account |
-| `equity_injection` | Owner or shareholder capital contribution |
-| `owner_draw` | Owner distribution or draw |
-| `loan_received` | Borrowing proceeds |
-| `loan_repayment` | Debt principal repayment |
-| `refund_received` | Refund back to the entity |
-| `refund` | Refund paid out by the entity |
-| `grant` | Grant or subsidy receipt |
+`income`, `expense`, `fee`, `tax_payment`, `deposit`, `withdrawal`, `transfer_in`, `transfer_out`, `equity_injection`, `owner_draw`, `loan_received`, `loan_repayment`, `refund_received`, `refund`, `grant`
 
-### Document types
+### Documents
 
-| Type | Typical meaning |
-|---|---|
-| `invoice` | Issued or received financial document |
-| `bill` | Alternative document label for a payable or received invoice |
+`invoice`, `bill`
 
-Use `data.direction` to indicate whether the document is `issued` or `received`.
-Use `data.invoice_id` to connect later settlement events.
+Document events SHOULD use:
 
-### Audit and lifecycle types
+- `data.direction`
+- `data.invoice_id`
+- `data.counterparty`
+- `data.due_date`
 
-| Type | Meaning |
-|---|---|
-| `reclassify` | Append-only reinterpretation of category or type for an existing event |
-| `correction` | Append-only correction record against an existing event |
-| `confirm` | Explicit review confirmation of an existing event |
-| `snapshot` | Stored derived checkpoint used to accelerate later reasoning |
-| `opening_balance` | Starting account or liability state before later imports |
+### Audit and lifecycle
 
-### Asset lifecycle types
+`reclassify`, `correction`, `confirm`, `snapshot`, `opening_balance`
 
-| Type | Meaning |
-|---|---|
-| `disposal` | Asset sale or disposal referencing `data.asset_id` |
-| `write_off` | Asset removal or loss referencing `data.asset_id` |
-| `impairment` | Asset impairment referencing `data.asset_id` |
+### Asset lifecycle
+
+`disposal`, `write_off`, `impairment`
 
 ## Recommended `data.*` Fields
 
-The CLI does not require all of these. They are conventions that make the ledger more durable and agent workflows more reliable.
+These fields are conventions, not universal requirements.
 
-### Generic event fields
+### Generic
 
-| Field | Use |
+| Field | Meaning |
 |---|---|
-| `amount` | Signed monetary amount in transaction currency |
-| `currency` | Transaction currency, e.g. `USD` |
-| `description` | Human-readable description of the event |
-| `category` | Policy-facing category label |
-| `confidence` | Suggested review state: `clear`, `inferred`, `unclear`, or omitted |
-| `ref` | Stable import identity or upstream reference |
-| `counterparty` | Vendor, customer, bank, exchange, or other party |
-| `account` | Account identifier, e.g. `checking`, `credit_card`, `wallet:usdc` |
+| `amount` | signed monetary amount |
+| `currency` | transaction currency |
+| `description` | human-readable description |
+| `category` | policy-facing category label |
+| `confidence` | review state such as `clear`, `inferred`, `unclear` |
+| `ref` | stable import identity or upstream reference |
+| `counterparty` | other party |
+| `account` | account identifier |
 
-### Provenance fields
+### Provenance
 
-| Field | Use |
+| Field | Meaning |
 |---|---|
-| `source_doc` | Filename, URL, statement id, or source artifact label |
-| `source_row` | Row number or record index in the upstream source |
-| `source_hash` | Fingerprint of the source row or document |
-| `provenance` | Extraction notes or free-form trace |
-| `recorded_by` | Human or agent identity |
-| `recorded_via` | Import path or tool name |
-| `import_session` | Batch or run identifier |
+| `source_doc` | source artifact label |
+| `source_row` | upstream row or record index |
+| `source_hash` | fingerprint of source material |
+| `provenance` | extraction notes |
+| `recorded_by` | human or agent identity |
+| `recorded_via` | import path or tool |
+| `import_session` | batch or run identifier |
 
-### Document linkage fields
+### Documents
 
-| Field | Use |
+| Field | Meaning |
 |---|---|
-| `invoice_id` | Stable document identifier used to match settlements |
+| `invoice_id` | stable document identifier |
 | `direction` | `issued` or `received` |
-| `due_date` | Due date for aging and open document views |
-| `counterparty` | Customer or vendor |
+| `due_date` | due date for aging/open items |
 
-### Asset fields
+### Assets
 
-| Field | Use |
+| Field | Meaning |
 |---|---|
-| `capitalize` | `true` if the event should appear in the asset register |
-| `useful_life_months` | Override default life for depreciation |
-| `asset_id` | Event id of the original capitalized purchase |
-| `impairment_amount` | Amount used on impairment events |
-| `proceeds` | Disposal proceeds |
+| `capitalize` | include in asset register |
+| `useful_life_months` | depreciation life override |
+| `asset_id` | original capitalized event id |
+| `impairment_amount` | impairment value |
+| `proceeds` | disposal proceeds |
 
-### FX and valuation fields
+### FX and lot tracking
 
-| Field | Use |
-|---|---|
-| `fx_rate` | Transaction-time FX rate |
-| `base_currency` | Base or reporting currency |
-| `price_usd` | USD unit or event price |
-| `price_source` | Price feed or provider |
-| `valuation_ts` | Timestamp for the valuation fact |
+Common optional fields:
 
-### Lot tracking fields
+- `fx_rate`
+- `base_currency`
+- `price_usd`
+- `price_source`
+- `valuation_ts`
+- `lot_id`
+- `lot_ref`
+- `disposition_lots`
 
-| Field | Use |
-|---|---|
-| `lot_id` | New lot created by an acquisition |
-| `lot_ref` | Single referenced lot on a disposition |
-| `disposition_lots` | Array of lot fragments consumed by a disposition |
+## Canonical Event Shapes
 
-## Event Shapes by Use Case
+Only a few examples are kept here. They define the shape classes that matter most.
 
 ### Expense
 
-Input shape:
+Input:
 
 ```json
 {
@@ -296,56 +268,12 @@ Input shape:
     "currency": "USD",
     "description": "AWS March hosting",
     "category": "hosting",
-    "confidence": "clear",
-    "ref": "txn_123",
-    "source_doc": "bank-march.csv",
-    "source_row": 42,
-    "recorded_by": "codex",
-    "import_session": "bank-2026-03"
+    "ref": "txn_123"
   }
 }
 ```
 
-Stored form:
-
-```json
-{
-  "ts": "2026-03-18T09:30:00.000Z",
-  "source": "bank",
-  "type": "expense",
-  "data": {
-    "amount": -125.50,
-    "currency": "USD",
-    "description": "AWS March hosting",
-    "category": "hosting",
-    "confidence": "clear",
-    "ref": "txn_123",
-    "source_doc": "bank-march.csv",
-    "source_row": 42,
-    "recorded_by": "codex",
-    "import_session": "bank-2026-03"
-  },
-  "id": "generated-by-cli",
-  "prev": "generated-by-cli"
-}
-```
-
-### Income
-
-```json
-{
-  "source": "stripe",
-  "type": "income",
-  "data": {
-    "amount": 1700,
-    "currency": "USD",
-    "description": "Consulting payout",
-    "category": "services_revenue",
-    "counterparty": "Acme",
-    "ref": "po_987"
-  }
-}
-```
+Stored effect: amount is normalized negative.
 
 ### Issued invoice
 
@@ -359,24 +287,7 @@ Stored form:
     "direction": "issued",
     "invoice_id": "INV-001",
     "counterparty": "Acme",
-    "due_date": "2026-04-15",
-    "description": "March consulting"
-  }
-}
-```
-
-### Cash settlement against invoice
-
-```json
-{
-  "source": "bank",
-  "type": "income",
-  "data": {
-    "amount": 5000,
-    "currency": "USD",
-    "invoice_id": "INV-001",
-    "counterparty": "Acme",
-    "description": "Payment for INV-001"
+    "due_date": "2026-04-15"
   }
 }
 ```
@@ -402,19 +313,17 @@ Convention:
 - positive amount => asset
 - negative amount => liability
 
-### Capitalized asset purchase
+### Reclassification audit event
 
 ```json
 {
-  "source": "bank",
-  "type": "expense",
+  "source": "review",
+  "type": "reclassify",
   "data": {
-    "amount": 15000,
-    "currency": "USD",
-    "description": "MacBook Pro",
-    "category": "hardware",
-    "capitalize": true,
-    "useful_life_months": 36
+    "original_id": "abcd1234",
+    "new_category": "software",
+    "new_type": "expense",
+    "reason": "AWS support charge was miscategorized as hosting"
   }
 }
 ```
@@ -447,75 +356,21 @@ Convention:
 
 Snapshots are derived checkpoints, not source-of-truth accounting entries.
 
-### Reclassification audit event
+## Schema Evolution Rules
 
-```json
-{
-  "source": "review",
-  "type": "reclassify",
-  "data": {
-    "original_id": "abcd1234",
-    "new_category": "software",
-    "new_type": "expense",
-    "reason": "AWS support charge was miscategorized as hosting"
-  }
-}
-```
+To preserve historical ledger stability:
 
-### Correction audit event
-
-```json
-{
-  "source": "review",
-  "type": "correction",
-  "data": {
-    "original_id": "abcd1234",
-    "reason": "Wrong counterparty and reference",
-    "corrected_fields": {
-      "counterparty": "Amazon Web Services",
-      "ref": "txn_456"
-    }
-  }
-}
-```
-
-### Confirmation audit event
-
-```json
-{
-  "source": "review",
-  "type": "confirm",
-  "data": {
-    "original_id": "abcd1234",
-    "confidence": "clear",
-    "confirmed_by": "martin"
-  }
-}
-```
-
-## Snapshot Semantics
-
-A snapshot is a derived checkpoint written into the ledger.
-
-- It is not the canonical source of truth.
-- It is not a substitute for the underlying event history.
-- It exists to accelerate later reasoning, context generation, and compaction workflows.
-
-## Ingestion Guidance
-
-When normalizing raw sources into clawbooks events:
-
-1. Sort statement-like inputs into chronological order.
-2. Capture opening balance, closing balance, expected row count, debits, and credits before import.
-3. Preserve provenance fields so every material event can be traced back to source material.
-4. Normalize signs using the canonical type conventions.
-5. Attach stable references where available, such as `ref`, `invoice_id`, or upstream ids.
-6. Keep categories policy-facing rather than source-facing where possible.
-7. Use `confidence` when classification is uncertain.
+- future tooling MUST continue to read old rows with the same top-level envelope
+- old field meanings MUST remain unchanged
+- new optional `data.*` fields MAY be added
+- new `type` values MAY be added
+- future tooling SHOULD ignore unknown `data.*` fields unless explicitly taught to use them
+- future tooling SHOULD treat unknown `type` values as valid stored facts, not as corrupt rows
+- removing canonical top-level fields MUST NOT happen without a formal ledger migration strategy
 
 ## What the Schema Does Not Decide
 
-The schema stores events and preserves audit history. It does not itself decide:
+The schema does not decide:
 
 - recognition timing
 - cost basis method
