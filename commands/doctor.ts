@@ -4,6 +4,7 @@ import { availablePolicyExamples, packageSupportFiles } from "../books.js";
 import { latestSnapshot, readAll } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
+import { CLI_VERSION } from "../version.js";
 import { analyzeVerification } from "./verify.js";
 
 export function cmdDoctor(params: {
@@ -76,6 +77,7 @@ export function cmdDoctor(params: {
 
   console.log(JSON.stringify({
     command: "doctor",
+    cli_version: CLI_VERSION,
     cwd: resolve("."),
     resolved_books: {
       books_dir: params.booksDir,

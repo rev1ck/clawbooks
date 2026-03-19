@@ -6,6 +6,7 @@ import { cmdPolicy } from "./commands/policy.js";
 import { cmdWhere } from "./commands/where.js";
 import { cmdDoctor } from "./commands/doctor.js";
 import { cmdQuickstart } from "./commands/quickstart.js";
+import { cmdVersion } from "./commands/version.js";
 import { cmdDocuments } from "./commands/documents.js";
 import { cmdSummary } from "./commands/summary.js";
 import { cmdContext } from "./commands/context.js";
@@ -21,6 +22,7 @@ import { cmdRecord } from "./commands/record.js";
 import { cmdBatch } from "./commands/batch.js";
 import { cmdAssets } from "./commands/assets.js";
 import { cmdPack } from "./commands/pack.js";
+import { CLI_VERSION } from "./version.js";
 
 // Parse --books global flag from argv before command dispatch
 function extractBooksFlag(argv: string[]): { booksFlag?: string; rest: string[] } {
@@ -53,7 +55,7 @@ function stdin(): Promise<string> {
 
 // --- Help ---
 
-const HELP = `clawbooks — financial memory for agents.
+const HELP = `clawbooks v${CLI_VERSION} — financial memory for agents.
 
 Clawbooks has 3 core parts:
   program.md    Operating manual for the agent
@@ -83,6 +85,7 @@ Setup:
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
+  version    [--latest]               Print the installed version or compare to npm
 
 Import:
   record  <json>              Append one event to the ledger
@@ -121,6 +124,8 @@ Important terms:
 Quick examples:
   clawbooks quickstart
   clawbooks doctor
+  clawbooks version
+  clawbooks version --latest
   clawbooks init
   clawbooks policy --path
   clawbooks policy --list-examples
@@ -223,6 +228,7 @@ switch (cmd) {
       policyPath: POLICY,
       resolution: BOOKS_RESOLUTION,
     }); break;
+  case "version":   cmdVersion(args); break;
   case "stats":     cmdStats(LEDGER); break;
   case "verify":    cmdVerify(args, LEDGER); break;
   case "reconcile": cmdReconcile(args, LEDGER); break;

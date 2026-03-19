@@ -38,6 +38,8 @@ CONTEXT_WITH_POLICY="$ROOT/context-with-policy.txt"
 POLICY_PATH_OUT="$ROOT/policy-path.txt"
 POLICY_EXAMPLES_JSON="$ROOT/policy-examples.json"
 POLICY_SIMPLE_EXAMPLE="$ROOT/policy-simple-example.md"
+VERSION_OUT="$ROOT/version.txt"
+HELP_OUT="$ROOT/help.txt"
 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js summary 2026-02 > "$SUMMARY_SHORTCUT"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js summary --after 2026-02-01 --before 2026-02-28 > "$SUMMARY_EXPLICIT"
@@ -50,12 +52,14 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --path > "$POLICY_PATH_OUT"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --list-examples > "$POLICY_EXAMPLES_JSON"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy --example simple > "$POLICY_SIMPLE_EXAMPLE"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js version > "$VERSION_OUT"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js > "$HELP_OUT"
 mkdir -p "$PACK_DIR"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js pack 2026-02 --out "$PACK_DIR" >/dev/null
 
-node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE"
+node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE" "$VERSION_OUT" "$HELP_OUT"
 const fs = require("fs");
-const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath, policyExamplesPath, policySimpleExamplePath] = process.argv.slice(2);
+const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath, policyExamplesPath, policySimpleExamplePath, versionPath, helpPath] = process.argv.slice(2);
 const summaryShortcut = JSON.parse(fs.readFileSync(summaryShortcutPath, "utf8"));
 const summaryExplicit = JSON.parse(fs.readFileSync(summaryExplicitPath, "utf8"));
 const verify = JSON.parse(fs.readFileSync(verifyPath, "utf8"));
@@ -66,6 +70,8 @@ const contextCompact = fs.readFileSync(contextCompactPath, "utf8");
 const contextVerbose = fs.readFileSync(contextVerbosePath, "utf8");
 const contextWithPolicy = fs.readFileSync(contextWithPolicyPath, "utf8");
 const policyPathOut = fs.readFileSync(policyPathOutPath, "utf8").trim();
+const versionOut = fs.readFileSync(versionPath, "utf8").trim();
+const helpOut = fs.readFileSync(helpPath, "utf8");
 
 function assert(condition, message) {
   if (!condition) {
@@ -95,6 +101,8 @@ assert(contextWithPolicy.includes("<policy>"), "context --include-policy should 
 assert(policyPathOut === expectedPolicyPath, "policy --path should print the configured policy path");
 assert(fs.readFileSync(policyExamplesPath, "utf8").includes('"name": "simple"'), "policy --list-examples should include simple");
 assert(fs.readFileSync(policySimpleExamplePath, "utf8").includes("Example Studio LLC"), "policy --example simple should print the bundled simple policy");
+assert(/^\d+\.\d+\.\d+$/.test(versionOut), "version command should print a semver version");
+assert(helpOut.includes(`clawbooks v${versionOut}`), "help should include the current version");
 assert(contextCompact.includes('"top_operating_expenses"'), "default context summary should use compact high-signal shape");
 assert(contextVerbose.includes('"by_type"'), "verbose context should include the full internal summary");
 console.log("cli.regression.sh: ok");
@@ -181,6 +189,7 @@ grep -q '"next_command": "clawbooks quickstart"' "$WHERE_JSON" || { echo "FAIL: 
 DOCTOR_JSON="$EMPTY_DIR3/doctor.json"
 (cd "$EMPTY_DIR3" && $CLI doctor 2>&1) > "$DOCTOR_JSON"
 grep -q '"command": "doctor"' "$DOCTOR_JSON" || { echo "FAIL: doctor should identify itself"; exit 1; }
+grep -q '"cli_version"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include cli version"; exit 1; }
 grep -q '"resolved_books"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report resolved books"; exit 1; }
 grep -q '"program_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report packaged support paths"; exit 1; }
 grep -q '"agent_bootstrap_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report agent bootstrap path"; exit 1; }
