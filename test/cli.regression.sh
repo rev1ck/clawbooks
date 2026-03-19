@@ -111,7 +111,7 @@ test -f "$BOOKS_ROOT/.books/ledger.jsonl" || { echo "FAIL: init should create le
 test -f "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init should create policy.md"; exit 1; }
 grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy should contain usable policy content"; exit 1; }
 grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
-grep -q "Next agent step: run \`clawbooks doctor\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to doctor"; exit 1; }
+grep -q "Next agent step: run \`clawbooks quickstart\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to quickstart"; exit 1; }
 
 # Test 2: init is idempotent
 (cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output2.txt"
@@ -170,19 +170,25 @@ EMPTY_DIR3="$(mktemp -d)"
 WHERE_JSON="$EMPTY_DIR3/where.json"
 (cd "$EMPTY_DIR3" && $CLI where 2>&1) > "$WHERE_JSON"
 grep -q '"resolution": "default:.books"' "$WHERE_JSON" || { echo "FAIL: where should report default resolution"; exit 1; }
-grep -q '"next_command": "clawbooks doctor"' "$WHERE_JSON" || { echo "FAIL: where should point to doctor"; exit 1; }
+grep -q '"next_command": "clawbooks quickstart"' "$WHERE_JSON" || { echo "FAIL: where should point to quickstart"; exit 1; }
 
 DOCTOR_JSON="$EMPTY_DIR3/doctor.json"
 (cd "$EMPTY_DIR3" && $CLI doctor 2>&1) > "$DOCTOR_JSON"
 grep -q '"command": "doctor"' "$DOCTOR_JSON" || { echo "FAIL: doctor should identify itself"; exit 1; }
-grep -q '"program_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report program path"; exit 1; }
+grep -q '"resolved_books"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report resolved books"; exit 1; }
+grep -q '"program_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report packaged support paths"; exit 1; }
 grep -q '"agent_bootstrap_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report agent bootstrap path"; exit 1; }
+grep -q '"event_schema_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report event schema path"; exit 1; }
+grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_JSON" || { echo "FAIL: doctor should point users to quickstart"; exit 1; }
 grep -q '"readiness": "missing"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report missing policy readiness"; exit 1; }
 grep -q 'Run `clawbooks init`' "$DOCTOR_JSON" || { echo "FAIL: doctor should recommend init when books are missing"; exit 1; }
 
 QUICKSTART_JSON="$EMPTY_DIR3/quickstart.json"
 (cd "$EMPTY_DIR3" && $CLI quickstart 2>&1) > "$QUICKSTART_JSON"
-grep -q '"command": "doctor"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should alias doctor"; exit 1; }
+grep -q '"command": "quickstart"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should identify itself"; exit 1; }
+grep -q '"core_files"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should define core files"; exit 1; }
+grep -q '"event_schema"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should point to the event schema"; exit 1; }
+grep -q '"produce_outputs"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe output generation workflow"; exit 1; }
 rm -rf "$EMPTY_DIR3"
 
 # Test 9: --books flag works for commands
@@ -261,7 +267,15 @@ DOCTOR_DOCS="$DOCS_ROOT/doctor.json"
 (cd "$DOCS_ROOT" && $CLI doctor 2>&1) > "$DOCTOR_DOCS"
 grep -q '"readiness": "starter"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report starter policy readiness"; exit 1; }
 grep -q '"provisional_outputs": true' "$DOCTOR_DOCS" || { echo "FAIL: doctor should mark starter policy outputs as provisional"; exit 1; }
-grep -q 'outputs as provisional' "$DOCTOR_DOCS" || { echo "FAIL: doctor should instruct agent to treat starter outputs as provisional"; exit 1; }
+grep -q '"policy_path": ".*/.books/policy.md"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should include resolved policy path"; exit 1; }
+grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should direct agents to quickstart"; exit 1; }
+
+QUICKSTART_DOCS="$DOCS_ROOT/quickstart.json"
+(cd "$DOCS_ROOT" && $CLI quickstart 2>&1) > "$QUICKSTART_DOCS"
+grep -q '"readiness": "starter"' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should surface policy readiness"; exit 1; }
+grep -q '"provisional_outputs": true' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should mark starter outputs as provisional"; exit 1; }
+grep -q '"path": ".*/docs/event-schema.md"' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should include event schema path"; exit 1; }
+grep -q 'balance sheet' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should describe broader reporting outcomes"; exit 1; }
 
 DOCUMENTS_JSON="$DOCS_ROOT/documents.json"
 (cd "$DOCS_ROOT" && $CLI documents 2026-03 --as-of 2026-03-31T00:00:00.000Z 2>&1) > "$DOCUMENTS_JSON"

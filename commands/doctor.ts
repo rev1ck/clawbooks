@@ -18,11 +18,12 @@ export function cmdDoctor(params: {
   const lint = lintPolicyText(policy, params.policyPath);
   const canRead = ledgerExists;
   const canWrite = booksExist || params.booksDir !== null || params.resolution === "env:file" || params.resolution === "cwd:bare";
+  const hasSupportFiles = support.exists.program && support.exists.agent_bootstrap && support.exists.event_schema;
 
   console.log(JSON.stringify({
     command: "doctor",
     cwd: resolve("."),
-    books: {
+    resolved_books: {
       books_dir: params.booksDir,
       ledger_path: params.ledgerPath,
       policy_path: params.policyPath,
@@ -41,37 +42,35 @@ export function cmdDoctor(params: {
       initialized: ledgerExists || policyExists,
       can_read_books: canRead,
       can_write_books: canWrite,
+      support_files_present: hasSupportFiles,
     },
-    policy: {
-      path: params.policyPath,
-      exists: policyExists,
-      readiness: policyReadiness.status,
-      provisional_outputs: policyReadiness.provisional,
-      reason: policyReadiness.reason,
-      lint_status: lint.status,
-      lint_issue_count: lint.issues.length,
-      lint_suggestion_count: lint.suggestions.length,
-      top_issues: lint.issues.slice(0, 3),
-      top_suggestions: lint.suggestions.slice(0, 3),
+    diagnostics: {
+      policy: {
+        path: params.policyPath,
+        exists: policyExists,
+        readiness: policyReadiness.status,
+        provisional_outputs: policyReadiness.provisional,
+        reason: policyReadiness.reason,
+        lint_status: lint.status,
+        lint_issue_count: lint.issues.length,
+        lint_suggestion_count: lint.suggestions.length,
+        top_issues: lint.issues.slice(0, 3),
+        top_suggestions: lint.suggestions.slice(0, 3),
+      },
+      support_files: {
+        program: support.exists.program ? "ok" : "missing",
+        agent_bootstrap: support.exists.agent_bootstrap ? "ok" : "missing",
+        event_schema: support.exists.event_schema ? "ok" : "missing",
+      },
     },
-    next_steps: !ledgerExists && !policyExists ? [
-      "Run `clawbooks init` in this folder, or pass `--books <dir>` to target an existing books directory.",
-      "Read `program.md` before importing or reporting.",
-      "Edit `policy.md` to match the entity, reporting basis, jurisdiction, and review rules.",
-      "Have the agent inspect raw sources, normalize them into events, then run `clawbooks batch` or `clawbooks record`.",
-      "After import, run `clawbooks verify`, `clawbooks reconcile`, `clawbooks summary`, and `clawbooks context` for the period.",
-    ] : policyReadiness.provisional ? [
-      "Read `program.md` and `clawbooks policy` before reporting. The current policy appears generic or incomplete.",
-      "You may proceed, but treat outputs as provisional and say so explicitly in the answer.",
-      "Flag material assumptions, uncertain classifications, and the minimum policy refinements needed.",
-      "Run `clawbooks verify` and `clawbooks reconcile` after import or before producing a year-end answer.",
-    ] : [
-      "Run `clawbooks policy` or open the policy path shown above before reporting.",
-      "Use `clawbooks context <period>` for agent reasoning and `clawbooks summary <period>` for precomputed aggregates.",
-      "Use `clawbooks verify` and `clawbooks reconcile` after imports or before producing a year-end answer.",
+    suggested_next_command: "clawbooks quickstart",
+    notes: [
+      "Use `clawbooks quickstart` for workflow guidance, core file roles, and reporting capabilities.",
+      !ledgerExists && !policyExists
+        ? "No books were found yet. Run `clawbooks init` or point clawbooks at an existing books directory."
+        : "Books were resolved successfully. Review the policy diagnostics above before relying on outputs.",
     ],
     agent_bootstrap: {
-      suggested_prompt: "Use clawbooks in this folder. Run `clawbooks doctor`, read `program.md` and `policy.md`, inspect the source files, import normalized events with provenance fields, then run `clawbooks verify`, `clawbooks summary`, and `clawbooks context` for the requested period before answering.",
       prompt_file: support.agent_bootstrap_path,
     },
   }, null, 2));

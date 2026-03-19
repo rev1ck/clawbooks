@@ -32,6 +32,7 @@
   },
   "files": [
     "build",
+    "docs",
     "program.md",
     "agent-bootstrap.md",
     "policy.md.example",

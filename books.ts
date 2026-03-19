@@ -11,6 +11,7 @@ const POLICY_EXAMPLES = {
 const SUPPORT_FILES = {
   program: resolve(MODULE_DIR, "..", "program.md"),
   agentBootstrap: resolve(MODULE_DIR, "..", "agent-bootstrap.md"),
+  eventSchema: resolve(MODULE_DIR, "..", "docs", "event-schema.md"),
 } as const;
 
 export type PolicyExampleName = keyof typeof POLICY_EXAMPLES;
@@ -74,17 +75,21 @@ export function availablePolicyExamples(): PolicyExampleName[] {
 export function packageSupportFiles(): {
   program_path: string;
   agent_bootstrap_path: string;
+  event_schema_path: string;
   exists: {
     program: boolean;
     agent_bootstrap: boolean;
+    event_schema: boolean;
   };
 } {
   return {
     program_path: SUPPORT_FILES.program,
     agent_bootstrap_path: SUPPORT_FILES.agentBootstrap,
+    event_schema_path: SUPPORT_FILES.eventSchema,
     exists: {
       program: existsSync(SUPPORT_FILES.program),
       agent_bootstrap: existsSync(SUPPORT_FILES.agentBootstrap),
+      event_schema: existsSync(SUPPORT_FILES.eventSchema),
     },
   };
 }

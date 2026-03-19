@@ -58,7 +58,7 @@ export function cmdInit(args: string[], params: InitParams) {
   console.log();
   console.log("Next step: edit policy.md to match your entity, reporting basis, jurisdiction, and rules.");
   console.log("Treat the seeded example as a starting point, then tailor it to your preferences.");
-  console.log("Next agent step: run `clawbooks doctor` for setup diagnostics and bootstrap guidance.");
+  console.log("Next agent step: run `clawbooks quickstart` for workflow guidance, then `clawbooks doctor` for diagnostics.");
   console.log();
   console.log("Recommended .gitignore additions:");
   console.log(`  ${dir.startsWith("/") ? dir : dir.replace(/^\.\//, "")}/ledger*.jsonl`);

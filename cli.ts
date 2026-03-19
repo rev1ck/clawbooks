@@ -5,6 +5,7 @@ import { ensureBooksDir, requireBooks, resolveBooks } from "./books.js";
 import { cmdPolicy } from "./commands/policy.js";
 import { cmdWhere } from "./commands/where.js";
 import { cmdDoctor } from "./commands/doctor.js";
+import { cmdQuickstart } from "./commands/quickstart.js";
 import { cmdDocuments } from "./commands/documents.js";
 import { cmdSummary } from "./commands/summary.js";
 import { cmdContext } from "./commands/context.js";
@@ -52,40 +53,84 @@ function stdin(): Promise<string> {
 
 // --- Help ---
 
-const HELP = `clawbooks — accounting by inference, not by engine.
+const HELP = `clawbooks — financial memory for agents.
+
+Clawbooks has 3 core parts:
+  program.md    Operating manual for the agent
+  policy.md     Accounting policy for the current books
+  ledger.jsonl  Append-only financial record
+
+Mental model:
+  The agent reads program.md to learn how clawbooks works.
+  The agent reads policy.md to learn how the current books should be accounted for.
+  The ledger stores facts. The agent does the accounting.
 
 First run:
-  Start with \`clawbooks doctor\`.
-  Agents should run \`clawbooks doctor\` before importing or reporting.
+  1. clawbooks quickstart
+  2. Read program.md
+  3. Read policy.md
+  4. Import normalized events with record/batch
+  5. Run verify + reconcile
+  6. Use summary, context, documents, assets, and pack to produce reports, checks, and audit-ready outputs
 
 Setup:
-  init    [--books DIR] [--example NAME]
-                                    Create a books directory with ledger + starter policy
+  init        [--books DIR] [--example NAME]
+                                      Create a books directory with ledger + starter policy
+  where                               Show resolved books, ledger, and policy paths
+  quickstart                          Explain the operating model, key files, and first-run flow
+  doctor                              Show setup diagnostics and policy readiness
 
-Data commands:
+Import:
   record  <json>              Append one event to the ledger
   batch                       Append JSONL events from stdin
-  log     [flags]             Print ledger events
-  context [period] [flags]    Print compact policy + snapshot + events (use --verbose for full payloads)
-  documents [period] [flags]  Show neutral document settlement and aging views
-  policy  [lint] [--path]     Print policy.md, lint it, or print the path
-  where                       Show resolved books, ledger, and policy paths
-  doctor                      Show setup diagnostics + agent bootstrap guidance
-  quickstart                  Alias for doctor with first-run guidance
-  stats                       Ledger summary
 
-Analysis commands:
-  verify    [period] [--source S] [--balance N] [--currency C]
-                                           Integrity + chain + balance check + duplicate detection
-  reconcile [period] --source S [flags]    Compare expected vs actual totals
-  review    [period] [--source S]          Show items needing classification review
-  summary   [period] [--source S]          Pre-computed aggregates for reports
-  snapshot  [period] [--save]              Compute period snapshot (balances, movement summary)
-  assets    [--category C] [--life N] [--as-of DATE]
-                                           Asset register (capitalize-flag based) with depreciation
-  compact   <period> [--archive PATH]     Archive old events, save snapshot, shrink ledger
-  pack      [period] [--source S] [--out DIR]
-                                           Generate audit pack (CSVs + JSON + policy)
+Inspect:
+  log     [flags]             Print ledger events
+  stats                       Ledger summary
+  policy  [lint] [--path]     Print policy.md, lint it, or print the path
+  documents [period] [flags]  Show neutral document settlement and aging views
+
+Report and analyze:
+  summary   [period] [flags]  Pre-computed aggregates for reports
+  context   [period] [flags]  Print policy-aware snapshot + events for event-level reasoning
+  review    [period] [flags]  Show items needing classification review
+  reconcile [period] --source S [flags]
+                              Compare expected vs actual totals
+  verify    [period] [flags]  Integrity + chain + balance check + duplicate detection
+  assets    [flags]           Asset register and depreciation view
+  pack      [period] [flags]  Generate audit pack (CSVs + JSON + policy)
+
+Maintenance:
+  snapshot  [period] [--save] Compute or save a derived checkpoint event
+  compact   <period> [--archive PATH]
+                              Archive old events, save snapshot, shrink ledger
+
+Important terms:
+  program.md   Operating manual for the agent
+  policy.md    Accounting policy for the current books
+  ledger.jsonl Append-only financial record
+  snapshot     Saved derived checkpoint in the ledger; not the source of truth
+
+Quick examples:
+  clawbooks quickstart
+  clawbooks doctor
+  clawbooks init
+  clawbooks policy --path
+  clawbooks summary 2026-03
+  clawbooks context 2026-03 --include-policy
+  clawbooks verify 2026-03 --balance 153869.05 --currency USD
+  clawbooks pack 2026-03 --out ./march-pack
+
+Outcome surface:
+  Use clawbooks to build P&L, balance sheet, cash flow, receivable/payable views,
+  tax cuts, asset registers, reconciliations, audit packs, and custom period analysis.
+
+Setup flags:
+  --books <dir>               Use a specific books directory
+
+Init flags:
+  --example <name>            Policy seed: default, simple, complex
+  --list-examples             Print available policy examples and exit
 
 Common flags:
   --after  <ISO date>         Events after this date
@@ -112,72 +157,10 @@ Period format:
   2026-03                     Single month
   2026-01/2026-06-30          Date range
 
-Sign convention:
-  Outflow types (expense, tax_payment, owner_draw, fee): amount stored as negative
-  Inflow types: amount stored as positive
-  Document types (invoice, bill): sign based on data.direction (issued=positive, received=negative)
-  Meta types (snapshot, reclassify, opening_balance, correction, confirm): sign not enforced
-  Asset events (disposal, write_off, impairment): sign not enforced
-
-Setup:
-  init    [--books DIR] [--example NAME]
-                                    Create a books directory with ledger + starter policy
-
-Global flags:
-  --books <dir>                     Use a specific books directory
-
-Init flags:
-  --example <name>                  Policy seed: default, simple, complex
-  --list-examples                   Print available policy examples and exit
-
 Environment:
   CLAWBOOKS_BOOKS     Books directory (default: auto-detected .books/)
   CLAWBOOKS_LEDGER    Override ledger path (takes priority over books dir)
   CLAWBOOKS_POLICY    Override policy path (takes priority over books dir)
-
-Books resolution order:
-  1. CLAWBOOKS_LEDGER / CLAWBOOKS_POLICY env vars (direct file paths)
-  2. CLAWBOOKS_BOOKS env var (books directory)
-  3. --books <dir> flag (books directory)
-  4. Walk up from CWD looking for .books/ containing ledger.jsonl or policy.md
-  5. Bare ./ledger.jsonl in CWD (backward compat)
-  6. Auto-create .books/ on first write command
-
-Bootstrap behavior:
-  New books are seeded with a policy example. Edit policy.md to match your entity and jurisdiction.
-  After setup, run \`clawbooks doctor\` for full bootstrap guidance.
-
-Examples:
-  clawbooks where
-  clawbooks doctor
-  clawbooks quickstart
-  clawbooks init
-  clawbooks init --list-examples
-  clawbooks init --example simple
-  clawbooks init --example complex
-  clawbooks init --books .books-personal
-  clawbooks record '{"source":"bank","type":"expense","data":{"amount":100,"currency":"USD","description":"test"}}'
-  cat events.jsonl | clawbooks batch
-  clawbooks --books .books-personal summary 2026-03
-  clawbooks log --last 10 -S stripe
-  clawbooks documents 2026-03 --status partial
-  clawbooks policy lint
-  clawbooks context 2026-03 --include-policy
-  clawbooks verify 2026-03 --balance 153869.05 --currency USD
-  clawbooks pack 2026-03 --out ./march-pack
-
-Multi-entity:
-  clawbooks init --books .books-personal
-  clawbooks --books .books-personal record '...'
-  CLAWBOOKS_BOOKS=.books-personal clawbooks summary 2026-03
-
-Agent workflow:
-  1. Agent runs: clawbooks doctor
-  2. Agent reads program.md + policy.md
-  3. Agent imports with clawbooks record/batch
-  4. Agent runs: clawbooks verify + reconcile to check integrity
-  5. Agent runs: clawbooks summary + context to produce reports
-  6. Agent runs: clawbooks snapshot --save to persist period summary
 `;
 
 // --- Dispatch ---
@@ -217,8 +200,14 @@ switch (cmd) {
     policyPath: POLICY,
     resolution: BOOKS_RESOLUTION,
   }); break;
-  case "doctor":
   case "quickstart":
+    cmdQuickstart({
+      booksDir: BOOKS_DIR,
+      ledgerPath: LEDGER,
+      policyPath: POLICY,
+      resolution: BOOKS_RESOLUTION,
+    }); break;
+  case "doctor":
     cmdDoctor({
       booksDir: BOOKS_DIR,
       ledgerPath: LEDGER,

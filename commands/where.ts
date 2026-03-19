@@ -21,8 +21,8 @@ export function cmdWhere(params: {
     },
     available_examples: availablePolicyExamples(),
     guidance: {
-      next_command: "clawbooks doctor",
-      note: "For full bootstrap guidance, run `clawbooks doctor`.",
+      next_command: "clawbooks quickstart",
+      note: "For workflow guidance, run `clawbooks quickstart`. For diagnostics, run `clawbooks doctor`.",
     },
   }, null, 2));
 }
