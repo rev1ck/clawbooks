@@ -236,6 +236,24 @@ These fields are conventions, not universal requirements.
 | `counterparty` | other party |
 | `account` | account identifier |
 
+### Statement and source-date conventions
+
+These fields are optional conventions for statement-style imports and other sources where multiple date concepts matter.
+
+| Field | Meaning |
+|---|---|
+| `transaction_date` | economic or transaction date from the source |
+| `posting_date` | posting or settlement date from the source |
+| `statement_start` | statement period start date |
+| `statement_end` | statement period end date |
+| `statement_id` | statement identifier or label |
+
+When both `transaction_date` and `posting_date` exist:
+
+- `ts` SHOULD still be a stable canonical timestamp for the stored event
+- `transaction_date` and `posting_date` MAY both be preserved in `data`
+- reports and reconciliations MAY choose different date bases without rewriting the historical fact
+
 ### Provenance
 
 | Field | Meaning |

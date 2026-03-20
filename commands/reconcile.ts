@@ -2,18 +2,26 @@ import { filter, readAll } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { round2, sortByTimestamp } from "../reporting.js";
 import { META_TYPES } from "../event-types.js";
+import { filterByDateBasis, type DateBasis } from "../imports.js";
 
 export function cmdReconcile(args: string[], ledgerPath: string) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
+  const dateBasis = (f["date-basis"] ?? "ledger") as DateBasis;
 
   if (!f.source) {
     console.error("Usage: clawbooks reconcile [period] --source S [--count N] [--debits N] [--credits N] [--currency C]");
     process.exit(1);
   }
+  if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
+    console.error("Invalid --date-basis. Use ledger, transaction, or posting.");
+    process.exit(1);
+  }
 
   const all = readAll(ledgerPath);
-  let events = sortByTimestamp(filter(all, { after, before, source: f.source }));
+  const sourceEvents = filter(all, { source: f.source });
+  const dated = filterByDateBasis(sourceEvents, { after, before, basis: dateBasis });
+  let events = sortByTimestamp(dated.events);
 
   if (f.currency) {
     events = events.filter((e) => String(e.data.currency) === f.currency);
@@ -21,9 +29,11 @@ export function cmdReconcile(args: string[], ledgerPath: string) {
 
   let actualDebits = 0;
   let actualCredits = 0;
+  let netMovement = 0;
   for (const e of events) {
     const amount = Number(e.data.amount);
     if (!isNaN(amount)) {
+      netMovement = round2(netMovement + amount);
       if (amount < 0) {
         actualDebits = round2(actualDebits + amount);
       } else {
@@ -62,6 +72,25 @@ export function cmdReconcile(args: string[], ledgerPath: string) {
     status = "RECONCILED";
   }
 
+  if (f["opening-balance"] !== undefined) {
+    expected.opening_balance = parseFloat(f["opening-balance"]);
+    actual.opening_balance = expected.opening_balance;
+    differences.opening_balance = 0;
+    status = "RECONCILED";
+  }
+
+  if (f["closing-balance"] !== undefined) {
+    expected.closing_balance = parseFloat(f["closing-balance"]);
+    actual.closing_balance = f["opening-balance"] !== undefined
+      ? round2(parseFloat(f["opening-balance"]) + netMovement)
+      : round2(netMovement);
+    differences.closing_balance = round2(actual.closing_balance - expected.closing_balance);
+    if (Math.abs(differences.closing_balance) > 0.01) {
+      issues.push(`Closing balance mismatch: expected ${expected.closing_balance}, got ${actual.closing_balance}`);
+    }
+    status = "RECONCILED";
+  }
+
   if (issues.length > 0) status = "MISMATCH";
 
   let gaps: string[] | undefined;
@@ -83,7 +112,11 @@ export function cmdReconcile(args: string[], ledgerPath: string) {
   }
 
   console.log(JSON.stringify({
+    date_basis: dateBasis,
+    period: { after: after ?? null, before: before ?? null },
     expected, actual, differences, status, issues,
+    net_movement: netMovement,
+    missing_date_basis_events: dated.missingBasisIds.length,
     ...(gaps ? { gaps } : {}),
   }, null, 2));
 }

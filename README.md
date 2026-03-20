@@ -115,6 +115,7 @@ This creates a `.books/` directory with:
 
 - `ledger.jsonl`
 - `policy.md`
+- `program.md`
 
 Then:
 
@@ -186,6 +187,10 @@ clawbooks policy --example simple
 Import:
 
 ```bash
+clawbooks import scaffold statement-csv
+clawbooks import scaffold generic-csv
+# edit mapper.mjs or mapper.py, then run it to emit JSONL
+clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500 --opening-balance 45000 --closing-balance 47500 --date-basis posting
 clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
 cat events.jsonl | clawbooks batch
 ```
@@ -207,8 +212,8 @@ clawbooks summary 2026-03
 clawbooks context 2026-03
 clawbooks context 2026-03 --include-policy
 clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD
-clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --gaps
-clawbooks review 2026-03 --source bank
+clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --opening-balance 45000 --closing-balance 46250 --date-basis posting --gaps
+clawbooks review 2026-03 --source bank --confidence inferred,unclear --min-magnitude 100 --group-by category
 clawbooks assets --as-of 2026-03-31
 clawbooks pack 2026-03 --out ./march-pack
 ```

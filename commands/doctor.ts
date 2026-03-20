@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { availablePolicyExamples, packageSupportFiles } from "../books.js";
+import { availablePolicyExamples, packageSupportFiles, resolveProgramPath } from "../books.js";
 import { latestSnapshot, readAll } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
@@ -14,6 +14,7 @@ export function cmdDoctor(params: {
   resolution: string;
 }) {
   const support = packageSupportFiles();
+  const program = resolveProgramPath(params.booksDir);
   const booksExist = params.booksDir ? existsSync(params.booksDir) : false;
   const ledgerExists = existsSync(params.ledgerPath);
   const policyExists = existsSync(params.policyPath);
@@ -92,6 +93,7 @@ export function cmdDoctor(params: {
     },
     package_support: {
       ...support,
+      resolved_program: program,
       available_examples: availablePolicyExamples(),
     },
     status: {
@@ -133,7 +135,7 @@ export function cmdDoctor(params: {
         top_suggestions: lint.suggestions.slice(0, 3),
       },
       support_files: {
-        program: support.exists.program ? "ok" : "missing",
+        program: program.exists ? "ok" : "missing",
         agent_bootstrap: support.exists.agent_bootstrap ? "ok" : "missing",
         event_schema: support.exists.event_schema ? "ok" : "missing",
       },

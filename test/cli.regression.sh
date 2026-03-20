@@ -123,6 +123,7 @@ CLI="node $(pwd)/build/cli.js"
 test -d "$BOOKS_ROOT/.books" || { echo "FAIL: init should create .books/"; exit 1; }
 test -f "$BOOKS_ROOT/.books/ledger.jsonl" || { echo "FAIL: init should create ledger.jsonl"; exit 1; }
 test -f "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init should create policy.md"; exit 1; }
+test -f "$BOOKS_ROOT/.books/program.md" || { echo "FAIL: init should create program.md"; exit 1; }
 grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy should contain usable policy content"; exit 1; }
 grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
 grep -q "Next agent step: run \`clawbooks quickstart\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to quickstart"; exit 1; }
@@ -169,6 +170,7 @@ EMPTY_DIR="$(mktemp -d)"
 test -d "$EMPTY_DIR/.books" || { echo "FAIL: record should auto-create .books/"; exit 1; }
 test -f "$EMPTY_DIR/.books/ledger.jsonl" || { echo "FAIL: record should create ledger in .books/"; exit 1; }
 test -f "$EMPTY_DIR/.books/policy.md" || { echo "FAIL: record should create policy in .books/"; exit 1; }
+test -f "$EMPTY_DIR/.books/program.md" || { echo "FAIL: record should create program in .books/"; exit 1; }
 grep -q "reporting:" "$EMPTY_DIR/.books/policy.md" || { echo "FAIL: auto-created policy should contain usable policy content"; exit 1; }
 rm -rf "$EMPTY_DIR"
 
@@ -208,6 +210,27 @@ grep -q '"core_files"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should def
 grep -q '"event_schema"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should point to the event schema"; exit 1; }
 grep -q '"produce_outputs"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe output generation workflow"; exit 1; }
 rm -rf "$EMPTY_DIR3"
+
+# Test 8c: import scaffold emits files without institution-specific magic
+IMPORT_ROOT="$(mktemp -d)"
+IMPORT_JSON="$IMPORT_ROOT/import.json"
+(cd "$IMPORT_ROOT" && $CLI import scaffold statement-csv 2>&1) > "$IMPORT_JSON"
+grep -q '"kind": "statement-csv"' "$IMPORT_JSON" || { echo "FAIL: import scaffold should report scaffold kind"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL: import scaffold should create README"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: import scaffold should create mapper"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: import scaffold should create python mapper"; exit 1; }
+grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: statement scaffold should mention transaction_date"; exit 1; }
+grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: python statement scaffold should mention transaction_date"; exit 1; }
+cat > "$IMPORT_ROOT/staged.jsonl" <<'EOF'
+{"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
+{"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
+EOF
+IMPORT_CHECK_JSON="$IMPORT_ROOT/import-check.json"
+(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --count 2 --debits -300 --credits 200 --opening-balance 1000 --closing-balance 900 --date-basis posting 2>&1) > "$IMPORT_CHECK_JSON"
+grep -q '"command": "import check"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should identify itself"; exit 1; }
+grep -q '"status": "ok"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should reconcile staged file"; exit 1; }
+grep -q '"closing_balance": 900' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should compute closing balance"; exit 1; }
+rm -rf "$IMPORT_ROOT"
 
 # Test 9: --books flag works for commands
 (cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"test","type":"income","data":{"amount":200,"currency":"USD"}}' 2>&1) > /dev/null
@@ -266,12 +289,12 @@ EOF
 
 cat > "$DOCS_ROOT/.books/ledger.jsonl" <<'EOF'
 {"ts":"2026-03-01T00:00:00.000Z","source":"manual","type":"invoice","data":{"amount":500,"currency":"USD","direction":"issued","invoice_id":"INV-001","counterparty":"acme","due_date":"2026-03-15","confidence":"clear"},"id":"doc1","prev":"genesis"}
-{"ts":"2026-03-05T00:00:00.000Z","source":"bank","type":"income","data":{"amount":200,"currency":"USD","invoice_id":"INV-001","description":"Partial payment","confidence":"clear"},"id":"pay1","prev":"x"}
+{"ts":"2026-03-05T00:00:00.000Z","source":"bank","type":"income","data":{"amount":200,"currency":"USD","invoice_id":"INV-001","description":"Partial payment","confidence":"clear","transaction_date":"2026-03-04","posting_date":"2026-03-05"},"id":"pay1","prev":"x"}
 {"ts":"2026-03-02T00:00:00.000Z","source":"manual","type":"bill","data":{"amount":300,"currency":"USD","direction":"received","invoice_id":"BILL-001","counterparty":"aws","due_date":"2026-03-20","confidence":"clear"},"id":"doc2","prev":"y"}
-{"ts":"2026-03-18T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-300,"currency":"USD","invoice_id":"BILL-001","description":"Bill payment","confidence":"clear"},"id":"pay2","prev":"z"}
+{"ts":"2026-03-18T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-300,"currency":"USD","invoice_id":"BILL-001","description":"Bill payment","confidence":"clear","transaction_date":"2026-03-17","posting_date":"2026-03-18"},"id":"pay2","prev":"z"}
 {"ts":"2026-03-10T00:00:00.000Z","source":"manual","type":"invoice","data":{"amount":120,"currency":"USD","direction":"issued","counterparty":"beta","confidence":"clear"},"id":"doc3","prev":"q"}
-{"ts":"2026-03-12T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":75,"currency":"USD","category":"software","confidence":"unclear"},"id":"rev1","prev":"w"}
-{"ts":"2026-03-13T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":40,"currency":"USD","category":"meals","confidence":"inferred","recorded_by":"agent-1"},"id":"rev2","prev":"r"}
+{"ts":"2026-03-12T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":75,"currency":"USD","category":"software","confidence":"unclear","transaction_date":"2026-03-11","posting_date":"2026-03-12"},"id":"rev1","prev":"w"}
+{"ts":"2026-03-13T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":40,"currency":"USD","category":"meals","confidence":"inferred","recorded_by":"agent-1","transaction_date":"2026-03-13","posting_date":"2026-03-13"},"id":"rev2","prev":"r"}
 {"ts":"2026-03-14T00:00:00.000Z","source":"manual","type":"confirm","data":{"original_id":"rev1","confidence":"clear","confirmed_by":"reviewer-1","notes":"matched to receipt"},"id":"conf1","prev":"s"}
 {"ts":"2026-03-15T00:00:00.000Z","source":"manual","type":"correction","data":{"original_id":"pay1","reason":"bank memo typo","corrected_fields":{"description":"Partial payment corrected"}},"id":"corr1","prev":"t"}
 EOF
@@ -327,6 +350,18 @@ REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 2>&1) > "$REVIEW_DOCS"
 grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
 grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
+
+REVIEW_FILTERED="$DOCS_ROOT/review-filtered.json"
+(cd "$DOCS_ROOT" && $CLI review 2026-03 --confidence inferred --min-magnitude 100 --group-by category 2>&1) > "$REVIEW_FILTERED"
+grep -q '"confidence": \[' "$REVIEW_FILTERED" || { echo "FAIL: review should report applied confidence filter"; exit 1; }
+grep -q '"min_magnitude": 100' "$REVIEW_FILTERED" || { echo "FAIL: review should report applied materiality filter"; exit 1; }
+grep -q '"group_by": "category"' "$REVIEW_FILTERED" || { echo "FAIL: review should report grouping choice"; exit 1; }
+grep -q '"next_actions"' "$REVIEW_FILTERED" || { echo "FAIL: review should emit next action templates"; exit 1; }
+
+RECONCILE_DATE_BASIS="$DOCS_ROOT/reconcile-date-basis.json"
+(cd "$DOCS_ROOT" && $CLI reconcile 2026-03 --source bank --date-basis posting --count 4 --opening-balance 100 --closing-balance 115 2>&1) > "$RECONCILE_DATE_BASIS"
+grep -q '"date_basis": "posting"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile should report date basis"; exit 1; }
+grep -q '"closing_balance"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile should include closing balance checks"; exit 1; }
 
 PACK_OUT="$DOCS_ROOT/pack"
 mkdir -p "$PACK_OUT"

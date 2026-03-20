@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { availablePolicyExamples, packageSupportFiles } from "../books.js";
+import { availablePolicyExamples, packageSupportFiles, resolveProgramPath } from "../books.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
 
 export function cmdQuickstart(params: {
@@ -10,6 +10,7 @@ export function cmdQuickstart(params: {
   resolution: string;
 }) {
   const support = packageSupportFiles();
+  const program = resolveProgramPath(params.booksDir);
   const booksExist = params.booksDir ? existsSync(params.booksDir) : false;
   const ledgerExists = existsSync(params.ledgerPath);
   const policyExists = existsSync(params.policyPath);
@@ -32,8 +33,10 @@ export function cmdQuickstart(params: {
     core_files: {
       program: {
         role: "Operating manual for the agent",
-        path: support.program_path,
-        exists: support.exists.program,
+        path: program.path,
+        exists: program.exists,
+        source: program.source,
+        package_path: support.program_path,
       },
       policy: {
         role: "Accounting policy for the current books",
@@ -69,6 +72,7 @@ export function cmdQuickstart(params: {
       "Read program.md.",
       "Read policy.md.",
       "Read event-schema.md if you are importing or revising event shapes.",
+      "Use `clawbooks import scaffold <kind>` if you want a mapper template before writing import code.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
       "Run `clawbooks verify` and `clawbooks reconcile` after imports when source totals are available.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
@@ -76,6 +80,7 @@ export function cmdQuickstart(params: {
     workflow: {
       import: [
         "Inspect the source files and normalize them into clawbooks events.",
+        "If you need a starting point, generate an editable template with `clawbooks import scaffold <kind>`.",
         "Preserve provenance such as data.ref, data.source_doc, data.source_row, data.source_hash, and data.provenance.",
         "Write events with `clawbooks record` or `clawbooks batch`.",
       ],

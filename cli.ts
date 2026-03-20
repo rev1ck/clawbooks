@@ -22,6 +22,7 @@ import { cmdRecord } from "./commands/record.js";
 import { cmdBatch } from "./commands/batch.js";
 import { cmdAssets } from "./commands/assets.js";
 import { cmdPack } from "./commands/pack.js";
+import { cmdImport } from "./commands/import.js";
 import { CLI_VERSION } from "./version.js";
 
 // Parse --books global flag from argv before command dispatch
@@ -82,6 +83,10 @@ First run:
 Setup:
   init        [--books DIR] [--example NAME]
                                       Create a books directory with ledger + starter policy
+  import      scaffold <kind> [flags]
+                                      Emit editable import mapper templates (mjs + python)
+  import      check <events.jsonl> [flags]
+                                      Validate a staged import file before append
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
@@ -90,6 +95,8 @@ Setup:
 Import:
   record  <json>              Append one event to the ledger
   batch                       Append JSONL events from stdin
+  import scaffold --list      List available import scaffolds
+  import check staged.jsonl   Check a staged JSONL import against explicit expectations
 
 Inspect:
   log     [flags]             Print ledger events
@@ -127,6 +134,8 @@ Quick examples:
   clawbooks version
   clawbooks version --latest
   clawbooks init
+  clawbooks import scaffold statement-csv
+  clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500 --opening-balance 45000 --closing-balance 47500 --date-basis posting
   clawbooks policy --path
   clawbooks policy --list-examples
   clawbooks policy --example simple
@@ -159,8 +168,17 @@ Reconcile flags:
   --count    <N>              Expected event count
   --debits   <N>              Expected debits total
   --credits  <N>              Expected credits total
+  --opening-balance <N>       Expected opening balance for statement-style checks
+  --closing-balance <N>       Expected closing balance after period movement
   --currency <C>              Filter to a specific currency
+  --date-basis <kind>         ledger, transaction, or posting
   --gaps                      Detect date gaps >7 days
+
+Review flags:
+  --confidence <list>         Comma-separated confidence filter such as inferred,unclear
+  --min-magnitude <N>         Only show items whose absolute amount is at least N
+  --limit <N>                 Limit the number of returned review items
+  --group-by <field>          category, source, or type
 
 Verify flags:
   --balance  <N>              Cross-check net balance against expected value
@@ -200,6 +218,7 @@ switch (cmd) {
   case "init":      cmdInit(args, { booksFlag }); break;
   case "record":    cmdRecord(args, LEDGER); break;
   case "batch":     cmdBatch(await stdin(), LEDGER); break;
+  case "import":    cmdImport(args, { booksDir: BOOKS_DIR }); break;
   case "log":       cmdLog(args, LEDGER); break;
   case "context":   cmdContext(args, {
     ledgerPath: LEDGER,

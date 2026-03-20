@@ -40,7 +40,7 @@ export function positional(args: string[]): string[] {
   return out;
 }
 
-function normalizeDateBoundary(value: string, boundary: "after" | "before"): string {
+export function normalizeDateBoundary(value: string, boundary: "after" | "before"): string {
   if (value.includes("T")) return value;
   if (/^\d{4}-\d{2}$/.test(value)) {
     const [y, m] = value.split("-").map(Number);

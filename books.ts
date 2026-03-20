@@ -94,6 +94,16 @@ export function packageSupportFiles(): {
   };
 }
 
+export function resolveProgramPath(booksDir: string | null): { path: string; source: "books" | "package"; exists: boolean } {
+  if (booksDir) {
+    const localProgram = join(booksDir, "program.md");
+    if (existsSync(localProgram)) {
+      return { path: localProgram, source: "books", exists: true };
+    }
+  }
+  return { path: SUPPORT_FILES.program, source: "package", exists: existsSync(SUPPORT_FILES.program) };
+}
+
 export function resolvePolicySeed(example?: string): { source: "example" | "fallback"; exampleName: string; path?: string } {
   const requested = example as PolicyExampleName | undefined;
   if (requested && requested in POLICY_EXAMPLES && existsSync(POLICY_EXAMPLES[requested])) {
@@ -162,6 +172,12 @@ export function ensureBooksDir(booksDir: string | null, ledger: string, policy: 
   if (!existsSync(policy)) {
     writePolicySeed(policy);
   }
+  if (booksDir) {
+    const program = join(booksDir, "program.md");
+    if (!existsSync(program)) {
+      writeProgramSeed(program);
+    }
+  }
 }
 
 export function writePolicySeed(policyPath: string, example?: string): { source: "example" | "fallback"; exampleName: string; path?: string } {
@@ -172,6 +188,10 @@ export function writePolicySeed(policyPath: string, example?: string): { source:
     writeFileSync(policyPath, DEFAULT_POLICY_TEMPLATE, "utf-8");
   }
   return policySeed;
+}
+
+export function writeProgramSeed(programPath: string): void {
+  copyFileSync(SUPPORT_FILES.program, programPath);
 }
 
 export function requireBooks(ledger: string): void {

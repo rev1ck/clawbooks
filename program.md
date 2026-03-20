@@ -179,8 +179,10 @@ When the user gives you a CSV or other raw financial data:
 5. Parse each row into a ledger event, classifying per the policy
 6. Separate operating activity from taxes, owner distributions, internal transfers, and capital items while importing
 7. For hardware/equipment purchases that meet the capitalization threshold, set `data.capitalize: true` and optionally `data.useful_life_months`
-8. Output as JSONL and pipe to `clawbooks batch`
-9. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
+8. If useful, generate a starter mapper with `clawbooks import scaffold <kind>` and adapt either `mapper.mjs` or `mapper.py` to the source
+9. Output as JSONL and run `clawbooks import check <events.jsonl>` with explicit statement expectations before append
+10. Pipe the checked file to `clawbooks batch`
+11. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
 10. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
 
 You are the parser. There is no import tool. You read the data and write the events.
@@ -353,6 +355,8 @@ Clawbooks stores its data in a `.books/` directory:
 
 ```bash
 clawbooks init                         # creates .books/ in CWD
+clawbooks import scaffold statement-csv
+clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500
 clawbooks init --list-examples         # show bundled policy examples
 clawbooks init --books .books-personal # creates named books dir
 clawbooks init --example simple        # use the cash-basis example
@@ -442,6 +446,7 @@ When using clawbooks from a generic coding agent session:
 5. Inspect the raw source files
 6. Import normalized ledger events with provenance fields
 7. Run `clawbooks verify` and `clawbooks reconcile` if source totals are available
+8. Use `clawbooks import scaffold <kind>` when you want an editable import template before writing mapper logic
 8. Run `clawbooks summary <period>` and `clawbooks context <period>`
 9. Answer according to `policy.md`, not according to hardcoded accounting assumptions
 
@@ -493,7 +498,9 @@ clawbooks verify --balance N --opening-balance N
                                      # cross-check closing balance against opening + movement
 clawbooks reconcile [period] -S     # compare expected vs actual totals
 clawbooks reconcile -S --gaps       # also detect date gaps >7 days
+clawbooks reconcile -S --date-basis posting --opening-balance 100 --closing-balance 250
 clawbooks review [period]           # show items needing classification review
+clawbooks review [period] --confidence inferred,unclear --min-magnitude 100 --group-by category
 clawbooks summary [period]          # aggregates + movement summary + report sections
                                      # plus neutral settlement / candidate summaries
 clawbooks snapshot [period] [--save] # compute period snapshot (balances, movement summary, sections)

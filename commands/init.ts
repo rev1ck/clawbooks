@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { availablePolicyExamples, resolvePolicySeed, writePolicySeed } from "../books.js";
+import { availablePolicyExamples, resolvePolicySeed, writePolicySeed, writeProgramSeed } from "../books.js";
 import { flags } from "../cli-helpers.js";
 
 type InitParams = {
@@ -28,9 +28,11 @@ export function cmdInit(args: string[], params: InitParams) {
   const dir = resolve(f.books ?? params.booksFlag ?? ".books");
   const ledger = join(dir, "ledger.jsonl");
   const policy = join(dir, "policy.md");
+  const program = join(dir, "program.md");
   const policySeed = resolvePolicySeed(f.example);
   const hadLedger = existsSync(ledger);
   const hadPolicy = existsSync(policy);
+  const hadProgram = existsSync(program);
 
   mkdirSync(dir, { recursive: true });
 
@@ -41,22 +43,28 @@ export function cmdInit(args: string[], params: InitParams) {
   if (!hadPolicy) {
     writePolicySeed(policy, f.example);
   }
+  if (!hadProgram) {
+    writeProgramSeed(program);
+  }
 
-  if (hadLedger && hadPolicy) {
+  if (hadLedger && hadPolicy && hadProgram) {
     console.log(`Books directory already exists at ${dir}`);
   } else {
     if (!hadLedger) console.log(`Created ${dir}/ledger.jsonl`);
     if (!hadPolicy) console.log(`Created ${dir}/policy.md`);
+    if (!hadProgram) console.log(`Created ${dir}/program.md`);
   }
 
   console.log();
   console.log(`Books directory: ${dir}`);
   console.log(`Ledger: ${ledger}`);
   console.log(`Policy: ${policy}`);
+  console.log(`Program: ${program}`);
   console.log(`Policy seed: ${policySeed.exampleName}`);
   console.log(`Available examples: ${availableExamples.join(", ") || "starter"}`);
   console.log();
   console.log("Next step: edit policy.md to match your entity, reporting basis, jurisdiction, and rules.");
+  console.log("Read the book-local program.md so the working files all live in one place.");
   console.log("Treat the seeded example as a starting point, then tailor it to your preferences.");
   console.log("Next agent step: run `clawbooks quickstart` for workflow guidance, then `clawbooks doctor` for diagnostics.");
   console.log();

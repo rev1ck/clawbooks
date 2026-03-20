@@ -21,6 +21,12 @@ export function lintPolicyText(text: string, policyPath: string) {
     if (!/^## Accounts receivable \/ payable$/m.test(text)) suggestions.push("Add an '## Accounts receivable / payable' section if documents are used.");
     if (!/^## Reconciliation$/m.test(text)) suggestions.push("Add a '## Reconciliation' section with import checks.");
     if (!/^## Data conventions$/m.test(text)) suggestions.push("Add a '## Data conventions' section for lots, FX, provenance, and agent identity.");
+    if (/(management|tax|reporting view|alternate interpretation)/i.test(text) && !/^## Reporting views$/m.test(text)) {
+      suggestions.push("If you maintain alternate interpretations such as management or tax views, add a short '## Reporting views' section.");
+    }
+    if (/(statement|posting date|transaction date|closing balance|opening balance)/i.test(text) && !/^## Statement conventions$/m.test(text)) {
+      suggestions.push("If statements drive imports or reconciliations, add a concise '## Statement conventions' section for date basis and balance checks.");
+    }
     const mentionsCrypto = /crypto|cost basis|lot/i.test(text);
     if (mentionsCrypto && !/lot_id|lot_ref|disposition_lots/i.test(text)) {
       suggestions.push("Crypto/trading policy should define lot-tracking conventions such as data.lot_id or data.lot_ref.");
