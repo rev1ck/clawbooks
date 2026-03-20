@@ -1133,7 +1133,7 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (p[0] === "reconcile") {
     const inputPath = p[1];
     if (!inputPath || !f.statement) {
-      console.error("Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--mappings PATH] [--out PATH] [--recorded-by NAME] [--notes TEXT]");
+      console.error("Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--out PATH] [--date-basis ledger|transaction|posting] [--currency C]");
       process.exit(1);
     }
 
@@ -1184,14 +1184,14 @@ export function cmdImport(args: string[], params: ImportParams) {
       net_movement: round2(importedTotals.net - stagedTotals.net),
       closing_balance: expectedClosing !== null && importedClosing !== null ? round2(importedClosing - Number(expectedClosing)) : null,
     };
+    const statementAligned = Math.abs(unexplainedDeltas.count) === 0
+      && Math.abs(unexplainedDeltas.debits) < 0.01
+      && Math.abs(unexplainedDeltas.credits) < 0.01
+      && Math.abs(unexplainedDeltas.net_movement) < 0.01
+      && (unexplainedDeltas.closing_balance === null || Math.abs(unexplainedDeltas.closing_balance) < 0.01);
     const artifact = {
       command: "import reconcile",
-      workflow_state: Math.abs(unexplainedDeltas.count) === 0
-        && Math.abs(unexplainedDeltas.debits) < 0.01
-        && Math.abs(unexplainedDeltas.credits) < 0.01
-        && Math.abs(unexplainedDeltas.net_movement) < 0.01
-        ? "statement_aligned"
-        : "needs_reconciliation",
+      workflow_state: statementAligned ? "statement_aligned" : "needs_reconciliation",
       what_matters: "This statement reconciliation artifact compares the staged import, the current ledger slice, and the declared statement expectations.",
       statement: {
         statement_id: profile.statement_id ?? null,
@@ -1229,11 +1229,7 @@ export function cmdImport(args: string[], params: ImportParams) {
         last_date: dateRange(importedScoped, dateBasis).last,
       },
       unexplained_deltas: unexplainedDeltas,
-      next_best_command: Math.abs(unexplainedDeltas.count) === 0
-        && Math.abs(unexplainedDeltas.debits) < 0.01
-        && Math.abs(unexplainedDeltas.credits) < 0.01
-        ? "clawbooks review"
-        : "clawbooks import check",
+      next_best_command: statementAligned ? "clawbooks review" : "clawbooks import check",
     };
 
     if (f.out) {

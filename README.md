@@ -97,7 +97,7 @@ npm install -g clawbooks
 clawbooks --help
 ```
 
-Current version target: `0.2.1`
+Current version target: `0.2.2`
 
 Bootstrap:
 

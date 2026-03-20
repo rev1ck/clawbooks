@@ -254,6 +254,10 @@ grep -q 'Usage: clawbooks import sessions' "$HELP_IMPORT_SESSIONS" || { echo "FA
 HELP_IMPORT_RECONCILE="$EMPTY_DIR3/help-import-reconcile.txt"
 (cd "$EMPTY_DIR3" && $CLI import reconcile --help 2>&1) > "$HELP_IMPORT_RECONCILE"
 grep -q 'Usage: clawbooks import reconcile' "$HELP_IMPORT_RECONCILE" || { echo "FAIL: import reconcile --help should print command help"; exit 1; }
+if grep -q -- '--recorded-by\|--notes\|--mappings' "$HELP_IMPORT_RECONCILE"; then
+  echo "FAIL: import reconcile help should not advertise unsupported flags"
+  exit 1
+fi
 
 HELP_REVIEW_BATCH="$EMPTY_DIR3/help-review-batch.txt"
 (cd "$EMPTY_DIR3" && $CLI review batch --help 2>&1) > "$HELP_REVIEW_BATCH"
@@ -321,6 +325,13 @@ IMPORT_RECONCILE_JSON="$IMPORT_ROOT/import-reconcile.json"
 grep -q '"command": "import reconcile"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should identify itself"; exit 1; }
 grep -q '"statement"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should include statement metadata"; exit 1; }
 grep -q '"unexplained_deltas"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should include unexplained deltas"; exit 1; }
+
+cat > "$IMPORT_ROOT/statement-profile-bad-close.json" <<'EOF'
+{"statement_id":"stmt-bad-close","source":"statement_import","currency":"USD","date_basis":"posting","statement_start":"2026-03-01","statement_end":"2026-03-31","opening_balance":1000,"closing_balance":1200,"count":2,"debits":-300,"credits":200,"newest_first":false}
+EOF
+IMPORT_RECONCILE_BAD_CLOSE="$IMPORT_ROOT/import-reconcile-bad-close.json"
+(cd "$IMPORT_ROOT" && $CLI import reconcile staged.jsonl --statement statement-profile-bad-close.json 2>&1) > "$IMPORT_RECONCILE_BAD_CLOSE"
+grep -q '"workflow_state": "needs_reconciliation"' "$IMPORT_RECONCILE_BAD_CLOSE" || { echo "FAIL: import reconcile should fail when closing balance disagrees"; exit 1; }
 
 IMPORT_CHECK_DISCOVERY="$IMPORT_ROOT/import-check-discovery.json"
 (cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_CHECK_DISCOVERY"

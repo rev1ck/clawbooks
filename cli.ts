@@ -293,7 +293,7 @@ Inspect saved import-session sidecars written by \`clawbooks import check --save
 Examples:
   clawbooks import sessions list
   clawbooks import sessions show latest`,
-    "import-reconcile": `Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--out PATH]
+    "import-reconcile": `Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--out PATH] [--date-basis ledger|transaction|posting] [--currency C]
 
 Build a statement reconciliation artifact that compares the staged import, current ledger slice, and declared statement expectations.
 
