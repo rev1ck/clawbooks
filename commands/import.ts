@@ -650,7 +650,8 @@ export function cmdImport(args: string[], params: ImportParams) {
       process.exit(1);
     }
 
-    const allEvents = sortByTimestamp(readEventsFile(resolve(inputPath)));
+    const rawEvents = readEventsFile(resolve(inputPath));
+    const allEvents = sortByTimestamp(rawEvents);
     let events = allEvents;
     const currency = f.currency ?? profile.currency;
     if (currency) events = events.filter((event) => String(event.data.currency) === currency);
@@ -664,6 +665,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       basis: dateBasis,
     });
     const scopedEvents = filteredByBasis.events;
+    const outOfPeriodCount = events.length - scopedEvents.length - filteredByBasis.missingBasisIds.length;
     const totals = sumBySign(scopedEvents);
     const range = dateRange(scopedEvents, dateBasis);
     const issues: string[] = [];
@@ -679,7 +681,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     const differences: Record<string, number> = {};
     const provenance = provenanceCoverage(scopedEvents);
     const dates = dateCoverage(scopedEvents);
-    const ordering = orderingProfile(allEvents, dateBasis);
+    const ordering = orderingProfile(rawEvents, dateBasis);
     const duplicateRefList = duplicateRefs(scopedEvents);
 
     if (f.count !== undefined || profile.count !== undefined) {
@@ -717,6 +719,9 @@ export function cmdImport(args: string[], params: ImportParams) {
       expected.statement_end = statementEnd;
       if (range.last && range.last > statementEnd) issues.push(`Last ${dateBasis} date ${range.last} falls after statement_end ${statementEnd}`);
     }
+    if (outOfPeriodCount > 0) {
+      issues.push(`${outOfPeriodCount} staged event(s) fall outside the requested statement period and were excluded from scoped checks.`);
+    }
     if (profile.newest_first === true && ordering.order !== "descending") {
       issues.push(`Statement profile says newest_first=true, but the staged file appears ${ordering.order} by ${dateBasis} date.`);
     }
@@ -737,6 +742,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       status: issues.length === 0 ? "ok" : "mismatch",
       issues,
       missing_date_basis_events: filteredByBasis.missingBasisIds,
+      out_of_period_events: outOfPeriodCount,
       event_types: eventCountsByType(scopedEvents),
       provenance_coverage: provenance,
       date_coverage: dates,

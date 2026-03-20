@@ -7,7 +7,8 @@ import { sortByTimestamp } from "../reporting.js";
 
 function visibleReviewItems(args: string[], ledgerPath: string): {
   items: LedgerEvent[];
-  tiers: Record<string, LedgerEvent[]>;
+  visibleTiers: Record<string, LedgerEvent[]>;
+  fullTiers: Record<string, LedgerEvent[]>;
   events: LedgerEvent[];
   all: LedgerEvent[];
   filters: {
@@ -49,10 +50,17 @@ function visibleReviewItems(args: string[], ledgerPath: string): {
 
   let items = [...tiers.unclear, ...tiers.inferred, ...tiers.unset];
   if (limit !== null) items = items.slice(0, limit);
+  const visibleIds = new Set(items.map((event) => event.id));
+  const visibleTiers: Record<string, LedgerEvent[]> = {
+    unclear: tiers.unclear.filter((event) => visibleIds.has(event.id)),
+    inferred: tiers.inferred.filter((event) => visibleIds.has(event.id)),
+    unset: tiers.unset.filter((event) => visibleIds.has(event.id)),
+  };
 
   return {
     items,
-    tiers,
+    visibleTiers,
+    fullTiers: tiers,
     events,
     all,
     filters: {
@@ -121,7 +129,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
     return;
   }
 
-  const { items, tiers, events, all, filters } = visibleReviewItems(args, ledgerPath);
+  const { items, visibleTiers, fullTiers, events, all, filters } = visibleReviewItems(args, ledgerPath);
   const needs_review = items.length;
   const reviewMateriality = buildReviewMateriality(events, all);
   const filteredMateriality = items.reduce((acc, event) => {
@@ -173,9 +181,14 @@ export function cmdReview(args: string[], ledgerPath: string) {
     needs_review,
     filters,
     by_confidence: {
-      unclear: tiers.unclear.length,
-      inferred: tiers.inferred.length,
-      unset: tiers.unset.length,
+      unclear: visibleTiers.unclear.length,
+      inferred: visibleTiers.inferred.length,
+      unset: visibleTiers.unset.length,
+    },
+    total_by_confidence: {
+      unclear: fullTiers.unclear.length,
+      inferred: fullTiers.inferred.length,
+      unset: fullTiers.unset.length,
     },
     materiality: {
       full_queue: reviewMateriality,

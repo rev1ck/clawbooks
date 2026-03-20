@@ -236,6 +236,26 @@ grep -q '"status": "ok"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check shou
 grep -q '"closing_balance": 900' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should compute closing balance"; exit 1; }
 grep -q '"statement_profile"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report loaded statement profile"; exit 1; }
 grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report provenance coverage"; exit 1; }
+
+cat > "$IMPORT_ROOT/staged-newest-first.jsonl" <<'EOF'
+{"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
+{"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
+EOF
+cat > "$IMPORT_ROOT/statement-profile-newest.json" <<'EOF'
+{"statement_id":"stmt-2","source":"statement_import","currency":"USD","date_basis":"posting","statement_start":"2026-03-01","statement_end":"2026-03-31","opening_balance":1000,"closing_balance":900,"count":2,"debits":-300,"credits":200,"newest_first":true}
+EOF
+IMPORT_CHECK_NEWEST="$IMPORT_ROOT/import-check-newest.json"
+(cd "$IMPORT_ROOT" && $CLI import check staged-newest-first.jsonl --statement statement-profile-newest.json 2>&1) > "$IMPORT_CHECK_NEWEST"
+grep -q '"status": "ok"' "$IMPORT_CHECK_NEWEST" || { echo "FAIL: import check should accept correctly newest-first staged files"; exit 1; }
+
+cat > "$IMPORT_ROOT/staged-out-of-period.jsonl" <<'EOF'
+{"ts":"2026-02-27T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":50,"currency":"USD","posting_date":"2026-02-27"}}
+{"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","posting_date":"2026-03-05"}}
+EOF
+IMPORT_CHECK_OOP="$IMPORT_ROOT/import-check-oop.json"
+(cd "$IMPORT_ROOT" && $CLI import check staged-out-of-period.jsonl --statement statement-profile-newest.json 2>&1) > "$IMPORT_CHECK_OOP"
+grep -q '"status": "mismatch"' "$IMPORT_CHECK_OOP" || { echo "FAIL: import check should flag out-of-period staged rows"; exit 1; }
+grep -q 'out-of-period' "$IMPORT_CHECK_OOP" || { echo "FAIL: import check should explain out-of-period rows"; exit 1; }
 rm -rf "$IMPORT_ROOT"
 
 # Test 9: --books flag works for commands
@@ -363,6 +383,12 @@ grep -q '"confidence": \[' "$REVIEW_FILTERED" || { echo "FAIL: review should rep
 grep -q '"min_magnitude": 100' "$REVIEW_FILTERED" || { echo "FAIL: review should report applied materiality filter"; exit 1; }
 grep -q '"group_by": "category"' "$REVIEW_FILTERED" || { echo "FAIL: review should report grouping choice"; exit 1; }
 grep -q '"next_actions"' "$REVIEW_FILTERED" || { echo "FAIL: review should emit next action templates"; exit 1; }
+
+REVIEW_LIMITED="$DOCS_ROOT/review-limited.json"
+(cd "$DOCS_ROOT" && $CLI review 2026-03 --limit 1 2>&1) > "$REVIEW_LIMITED"
+grep -q '"needs_review": 1' "$REVIEW_LIMITED" || { echo "FAIL: review limit should cap visible items"; exit 1; }
+grep -q '"inferred": 1' "$REVIEW_LIMITED" || { echo "FAIL: review counts should reflect limited visible queue"; exit 1; }
+grep -q '"total_by_confidence"' "$REVIEW_LIMITED" || { echo "FAIL: review should expose total queue counts separately"; exit 1; }
 
 REVIEW_BATCH="$DOCS_ROOT/review-actions.jsonl"
 REVIEW_BATCH_JSON="$DOCS_ROOT/review-batch.json"
