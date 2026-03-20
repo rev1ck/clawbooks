@@ -356,7 +356,7 @@ Clawbooks stores its data in a `.books/` directory:
 ```bash
 clawbooks init                         # creates .books/ in CWD
 clawbooks import scaffold statement-csv
-clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500
+clawbooks import check staged.jsonl --statement statement-profile.json
 clawbooks init --list-examples         # show bundled policy examples
 clawbooks init --books .books-personal # creates named books dir
 clawbooks init --example simple        # use the cash-basis example
@@ -501,6 +501,7 @@ clawbooks reconcile -S --gaps       # also detect date gaps >7 days
 clawbooks reconcile -S --date-basis posting --opening-balance 100 --closing-balance 250
 clawbooks review [period]           # show items needing classification review
 clawbooks review [period] --confidence inferred,unclear --min-magnitude 100 --group-by category
+clawbooks review batch [period] --out review-actions.jsonl --action confirm
 clawbooks summary [period]          # aggregates + movement summary + report sections
                                      # plus neutral settlement / candidate summaries
 clawbooks snapshot [period] [--save] # compute period snapshot (balances, movement summary, sections)

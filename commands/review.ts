@@ -1,10 +1,22 @@
+import { writeFileSync } from "node:fs";
 import { filter, readAll, type LedgerEvent } from "../ledger.js";
-import { flags, periodFromArgs } from "../cli-helpers.js";
+import { flags, periodFromArgs, positional } from "../cli-helpers.js";
 import { buildConfirmedSet, buildReviewMateriality } from "../review.js";
 import { META_TYPES } from "../event-types.js";
 import { sortByTimestamp } from "../reporting.js";
 
-export function cmdReview(args: string[], ledgerPath: string) {
+function visibleReviewItems(args: string[], ledgerPath: string): {
+  items: LedgerEvent[];
+  tiers: Record<string, LedgerEvent[]>;
+  events: LedgerEvent[];
+  all: LedgerEvent[];
+  filters: {
+    confidence: string[] | null;
+    min_magnitude: number | null;
+    limit: number | null;
+    group_by: string | null;
+  };
+} {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const all = readAll(ledgerPath);
@@ -18,14 +30,12 @@ export function cmdReview(args: string[], ledgerPath: string) {
     all.filter((e) => e.type === "reclassify").map((e) => String(e.data.original_id)),
   );
   const confirmed = buildConfirmedSet(all);
-
   const reviewable = events
     .filter((e) => !META_TYPES.has(e.type))
     .filter((e) => !reclassified.has(e.id))
     .filter((e) => !confirmed.has(e.id));
 
   const tiers: Record<string, LedgerEvent[]> = { unclear: [], inferred: [], unset: [] };
-
   for (const e of reviewable) {
     const confidence = String(e.data.confidence ?? "unset");
     if (confidence === "clear") continue;
@@ -39,6 +49,79 @@ export function cmdReview(args: string[], ledgerPath: string) {
 
   let items = [...tiers.unclear, ...tiers.inferred, ...tiers.unset];
   if (limit !== null) items = items.slice(0, limit);
+
+  return {
+    items,
+    tiers,
+    events,
+    all,
+    filters: {
+      confidence: requestedConfidence ? [...requestedConfidence] : null,
+      min_magnitude: minMagnitude,
+      limit,
+      group_by: groupBy,
+    },
+  };
+}
+
+export function cmdReview(args: string[], ledgerPath: string) {
+  const p = positional(args);
+  const f = flags(args);
+  if (p[0] === "batch") {
+    const nestedArgs = args.filter((arg, index) => !(index === 0 && arg === "batch"));
+    const outPath = f.out;
+    const action = f.action ?? "confirm";
+    if (!outPath) {
+      console.error("Usage: clawbooks review batch [period] --out PATH --action confirm|reclassify [--confirmed-by NAME] [--notes TEXT] [--new-category CAT]");
+      process.exit(1);
+    }
+    if (!["confirm", "reclassify"].includes(action)) {
+      console.error("Invalid --action. Use confirm or reclassify.");
+      process.exit(1);
+    }
+    const { items, filters } = visibleReviewItems(nestedArgs, ledgerPath);
+    const lines = items.map((event) => {
+      if (action === "confirm") {
+        return JSON.stringify({
+          source: "manual",
+          type: "confirm",
+          data: {
+            original_id: event.id,
+            confidence: "clear",
+            confirmed_by: f["confirmed-by"] ?? "review-batch",
+            notes: f.notes ?? "bulk review confirmation",
+          },
+        });
+      }
+      if (!f["new-category"]) {
+        console.error("Bulk reclassify requires --new-category CAT.");
+        process.exit(1);
+      }
+      return JSON.stringify({
+        source: "manual",
+        type: "reclassify",
+        data: {
+          original_id: event.id,
+          new_category: f["new-category"],
+        },
+      });
+    });
+    writeFileSync(outPath, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8");
+    console.log(JSON.stringify({
+      command: "review batch",
+      action,
+      out_path: outPath,
+      item_count: items.length,
+      filters,
+      next_steps: [
+        "Inspect the generated JSONL before appending it.",
+        `Append it with \`clawbooks batch < ${outPath}\` once you are satisfied.`,
+      ],
+    }, null, 2));
+    return;
+  }
+
+  const { items, tiers, events, all, filters } = visibleReviewItems(args, ledgerPath);
   const needs_review = items.length;
   const reviewMateriality = buildReviewMateriality(events, all);
   const filteredMateriality = items.reduce((acc, event) => {
@@ -57,9 +140,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
     },
   });
   const validGroupBy = new Set(["category", "source", "type"]);
-  const groups = groupBy && validGroupBy.has(groupBy)
+  const groups = filters.group_by && validGroupBy.has(filters.group_by)
     ? items.reduce((acc, event) => {
-      const key = String(groupBy === "source" ? event.source : groupBy === "type" ? event.type : event.data.category ?? "uncategorized");
+      const key = String(filters.group_by === "source" ? event.source : filters.group_by === "type" ? event.type : event.data.category ?? "uncategorized");
       const amount = Number(event.data.amount);
       const bucket = acc[key] ?? { count: 0, magnitude: 0, ids: [] as string[] };
       bucket.count++;
@@ -88,12 +171,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
 
   console.log(JSON.stringify({
     needs_review,
-    filters: {
-      confidence: requestedConfidence ? [...requestedConfidence] : null,
-      min_magnitude: minMagnitude,
-      limit,
-      group_by: groupBy,
-    },
+    filters,
     by_confidence: {
       unclear: tiers.unclear.length,
       inferred: tiers.inferred.length,

@@ -110,6 +110,7 @@ Report and analyze:
   summary   [period] [flags]  Pre-computed aggregates for reports
   context   [period] [flags]  Print policy-aware snapshot + events for event-level reasoning
   review    [period] [flags]  Show items needing classification review
+  review    batch [period]    Generate bulk append-only review actions as JSONL
   reconcile [period] --source S [flags]
                               Compare expected vs actual totals
   verify    [period] [flags]  Integrity + chain + balance check + duplicate detection
@@ -135,7 +136,8 @@ Quick examples:
   clawbooks version --latest
   clawbooks init
   clawbooks import scaffold statement-csv
-  clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500 --opening-balance 45000 --closing-balance 47500 --date-basis posting
+  clawbooks import check staged.jsonl --statement statement-profile.json
+  clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
   clawbooks policy --path
   clawbooks policy lint
   clawbooks policy --list-examples
@@ -180,6 +182,11 @@ Review flags:
   --min-magnitude <N>         Only show items whose absolute amount is at least N
   --limit <N>                 Limit the number of returned review items
   --group-by <field>          category, source, or type
+  --out <PATH>                Output path for review batch
+  --action <kind>             confirm or reclassify for review batch
+  --confirmed-by <NAME>       Confirmer label for bulk confirm files
+  --notes <TEXT>              Notes for bulk confirm files
+  --new-category <CAT>        Target category for bulk reclassify files
 
 Verify flags:
   --balance  <N>              Cross-check net balance against expected value

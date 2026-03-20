@@ -219,17 +219,23 @@ grep -q '"kind": "statement-csv"' "$IMPORT_JSON" || { echo "FAIL: import scaffol
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL: import scaffold should create README"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: import scaffold should create mapper"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: import scaffold should create python mapper"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/statement-profile.json" || { echo "FAIL: statement scaffold should create statement profile template"; exit 1; }
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: statement scaffold should mention transaction_date"; exit 1; }
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: python statement scaffold should mention transaction_date"; exit 1; }
 cat > "$IMPORT_ROOT/staged.jsonl" <<'EOF'
 {"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
 {"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
 EOF
+cat > "$IMPORT_ROOT/statement-profile.json" <<'EOF'
+{"statement_id":"stmt-1","source":"statement_import","currency":"USD","date_basis":"posting","statement_start":"2026-03-01","statement_end":"2026-03-31","opening_balance":1000,"closing_balance":900,"count":2,"debits":-300,"credits":200,"newest_first":false}
+EOF
 IMPORT_CHECK_JSON="$IMPORT_ROOT/import-check.json"
-(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --count 2 --debits -300 --credits 200 --opening-balance 1000 --closing-balance 900 --date-basis posting 2>&1) > "$IMPORT_CHECK_JSON"
+(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_CHECK_JSON"
 grep -q '"command": "import check"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should identify itself"; exit 1; }
 grep -q '"status": "ok"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should reconcile staged file"; exit 1; }
 grep -q '"closing_balance": 900' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should compute closing balance"; exit 1; }
+grep -q '"statement_profile"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report loaded statement profile"; exit 1; }
+grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report provenance coverage"; exit 1; }
 rm -rf "$IMPORT_ROOT"
 
 # Test 9: --books flag works for commands
@@ -357,6 +363,14 @@ grep -q '"confidence": \[' "$REVIEW_FILTERED" || { echo "FAIL: review should rep
 grep -q '"min_magnitude": 100' "$REVIEW_FILTERED" || { echo "FAIL: review should report applied materiality filter"; exit 1; }
 grep -q '"group_by": "category"' "$REVIEW_FILTERED" || { echo "FAIL: review should report grouping choice"; exit 1; }
 grep -q '"next_actions"' "$REVIEW_FILTERED" || { echo "FAIL: review should emit next action templates"; exit 1; }
+
+REVIEW_BATCH="$DOCS_ROOT/review-actions.jsonl"
+REVIEW_BATCH_JSON="$DOCS_ROOT/review-batch.json"
+(cd "$DOCS_ROOT" && $CLI review batch 2026-03 --out "$REVIEW_BATCH" --action confirm --confidence inferred 2>&1) > "$REVIEW_BATCH_JSON"
+test -f "$REVIEW_BATCH" || { echo "FAIL: review batch should write action file"; exit 1; }
+grep -q '"command": "review batch"' "$REVIEW_BATCH_JSON" || { echo "FAIL: review batch should identify itself"; exit 1; }
+grep -q '"item_count": 1' "$REVIEW_BATCH_JSON" || { echo "FAIL: review batch should report generated item count"; exit 1; }
+grep -q '"type":"confirm"' "$REVIEW_BATCH" || { echo "FAIL: review batch should emit confirm events"; exit 1; }
 
 RECONCILE_DATE_BASIS="$DOCS_ROOT/reconcile-date-basis.json"
 (cd "$DOCS_ROOT" && $CLI reconcile 2026-03 --source bank --date-basis posting --count 4 --opening-balance 100 --closing-balance 115 2>&1) > "$RECONCILE_DATE_BASIS"

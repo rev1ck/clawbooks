@@ -10,6 +10,20 @@ type ImportParams = {
 };
 
 type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch";
+type StatementProfile = {
+  statement_id?: string;
+  source?: string;
+  currency?: string;
+  date_basis?: DateBasis;
+  statement_start?: string;
+  statement_end?: string;
+  opening_balance?: number;
+  closing_balance?: number;
+  count?: number;
+  debits?: number;
+  credits?: number;
+  newest_first?: boolean;
+};
 
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
 
@@ -23,6 +37,19 @@ function readEventsFile(path: string): LedgerEvent[] {
     return lines.map((line) => JSON.parse(line));
   } catch {
     console.error(`Failed to parse JSONL events from ${path}`);
+    process.exit(1);
+  }
+}
+
+function readStatementProfile(path: string): StatementProfile {
+  if (!existsSync(path)) {
+    console.error(`No statement profile found at ${path}`);
+    process.exit(1);
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    console.error(`Failed to parse statement profile JSON from ${path}`);
     process.exit(1);
   }
 }
@@ -47,6 +74,100 @@ function eventCountsByType(events: LedgerEvent[]): Record<string, number> {
     out[event.type] = (out[event.type] ?? 0) + 1;
   }
   return out;
+}
+
+function provenanceCoverage(events: LedgerEvent[]) {
+  const counters = {
+    source_doc: 0,
+    source_row: 0,
+    source_hash: 0,
+    provenance: 0,
+    ref: 0,
+  };
+  for (const event of events) {
+    if (event.data.source_doc !== undefined) counters.source_doc++;
+    if (event.data.source_row !== undefined) counters.source_row++;
+    if (event.data.source_hash !== undefined) counters.source_hash++;
+    if (event.data.provenance !== undefined) counters.provenance++;
+    if (event.data.ref !== undefined) counters.ref++;
+  }
+  return {
+    total: events.length,
+    fields: Object.fromEntries(Object.entries(counters).map(([key, count]) => [key, {
+      count,
+      missing: events.length - count,
+    }])),
+  };
+}
+
+function dateCoverage(events: LedgerEvent[]) {
+  let transactionDate = 0;
+  let postingDate = 0;
+  for (const event of events) {
+    if (typeof event.data.transaction_date === "string" && event.data.transaction_date) transactionDate++;
+    if (typeof event.data.posting_date === "string" && event.data.posting_date) postingDate++;
+  }
+  return {
+    total: events.length,
+    transaction_date: {
+      count: transactionDate,
+      missing: events.length - transactionDate,
+    },
+    posting_date: {
+      count: postingDate,
+      missing: events.length - postingDate,
+    },
+  };
+}
+
+function orderingProfile(events: LedgerEvent[], basis: DateBasis) {
+  const values = events
+    .map((event) => {
+      if (basis === "ledger") return event.ts;
+      const value = basis === "transaction" ? event.data.transaction_date : event.data.posting_date;
+      return typeof value === "string" ? value : null;
+    })
+    .filter((value): value is string => Boolean(value));
+  let asc = true;
+  let desc = true;
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] < values[i - 1]) asc = false;
+    if (values[i] > values[i - 1]) desc = false;
+  }
+  return {
+    basis,
+    order: asc ? "ascending" : desc ? "descending" : "mixed",
+    event_count_with_basis: values.length,
+  } as const;
+}
+
+function duplicateRefs(events: LedgerEvent[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const event of events) {
+    const ref = typeof event.data.ref === "string" ? event.data.ref : null;
+    if (!ref) continue;
+    if (seen.has(ref)) duplicates.add(ref);
+    seen.add(ref);
+  }
+  return [...duplicates].sort();
+}
+
+function statementProfileTemplate(): string {
+  return JSON.stringify({
+    statement_id: "replace-with-statement-id",
+    source: "statement_import",
+    currency: "USD",
+    date_basis: "posting",
+    statement_start: "2026-03-01",
+    statement_end: "2026-03-31",
+    opening_balance: 1000,
+    closing_balance: 900,
+    count: 2,
+    debits: -300,
+    credits: 200,
+    newest_first: true,
+  }, null, 2) + "\n";
 }
 
 function dateRange(events: LedgerEvent[], basis: DateBasis): { first: string | null; last: string | null } {
@@ -518,11 +639,12 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (p[0] === "check") {
     const inputPath = p[1];
     if (!inputPath) {
-      console.error("Usage: clawbooks import check <events.jsonl> [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C]");
+      console.error("Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C]");
       process.exit(1);
     }
 
-    const dateBasis = (f["date-basis"] ?? "ledger") as DateBasis;
+    const profile = f.statement ? readStatementProfile(resolve(f.statement)) : {};
+    const dateBasis = (f["date-basis"] ?? profile.date_basis ?? "ledger") as DateBasis;
     if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
       console.error("Invalid --date-basis. Use ledger, transaction, or posting.");
       process.exit(1);
@@ -530,10 +652,12 @@ export function cmdImport(args: string[], params: ImportParams) {
 
     const allEvents = sortByTimestamp(readEventsFile(resolve(inputPath)));
     let events = allEvents;
-    if (f.currency) events = events.filter((event) => String(event.data.currency) === f.currency);
+    const currency = f.currency ?? profile.currency;
+    if (currency) events = events.filter((event) => String(event.data.currency) === currency);
+    if (profile.source) events = events.filter((event) => event.source === profile.source);
 
-    const statementStart = f["statement-start"];
-    const statementEnd = f["statement-end"];
+    const statementStart = f["statement-start"] ?? profile.statement_start;
+    const statementEnd = f["statement-end"] ?? profile.statement_end;
     const filteredByBasis = filterByDateBasis(events, {
       after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
       before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
@@ -553,28 +677,32 @@ export function cmdImport(args: string[], params: ImportParams) {
       last_date: range.last,
     };
     const differences: Record<string, number> = {};
+    const provenance = provenanceCoverage(scopedEvents);
+    const dates = dateCoverage(scopedEvents);
+    const ordering = orderingProfile(allEvents, dateBasis);
+    const duplicateRefList = duplicateRefs(scopedEvents);
 
-    if (f.count !== undefined) {
-      expected.count = parseInt(f.count);
+    if (f.count !== undefined || profile.count !== undefined) {
+      expected.count = f.count !== undefined ? parseInt(f.count) : Number(profile.count);
       differences.count = scopedEvents.length - Number(expected.count);
       if (differences.count !== 0) issues.push(`Count mismatch: expected ${expected.count}, got ${scopedEvents.length}`);
     }
-    if (f.debits !== undefined) {
-      expected.debits = parseFloat(f.debits);
+    if (f.debits !== undefined || profile.debits !== undefined) {
+      expected.debits = f.debits !== undefined ? parseFloat(f.debits) : Number(profile.debits);
       differences.debits = round2(totals.debits - Number(expected.debits));
       if (Math.abs(differences.debits) > 0.01) issues.push(`Debits mismatch: expected ${expected.debits}, got ${totals.debits}`);
     }
-    if (f.credits !== undefined) {
-      expected.credits = parseFloat(f.credits);
+    if (f.credits !== undefined || profile.credits !== undefined) {
+      expected.credits = f.credits !== undefined ? parseFloat(f.credits) : Number(profile.credits);
       differences.credits = round2(totals.credits - Number(expected.credits));
       if (Math.abs(differences.credits) > 0.01) issues.push(`Credits mismatch: expected ${expected.credits}, got ${totals.credits}`);
     }
-    if (f["opening-balance"] !== undefined) {
-      expected.opening_balance = parseFloat(f["opening-balance"]);
+    if (f["opening-balance"] !== undefined || profile.opening_balance !== undefined) {
+      expected.opening_balance = f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : Number(profile.opening_balance);
       actual.opening_balance = Number(expected.opening_balance);
     }
-    if (f["closing-balance"] !== undefined) {
-      expected.closing_balance = parseFloat(f["closing-balance"]);
+    if (f["closing-balance"] !== undefined || profile.closing_balance !== undefined) {
+      expected.closing_balance = f["closing-balance"] !== undefined ? parseFloat(f["closing-balance"]) : Number(profile.closing_balance);
       actual.closing_balance = round2((Number(actual.opening_balance ?? 0)) + totals.net);
       differences.closing_balance = round2(Number(actual.closing_balance) - Number(expected.closing_balance));
       if (Math.abs(differences.closing_balance) > 0.01) {
@@ -589,12 +717,20 @@ export function cmdImport(args: string[], params: ImportParams) {
       expected.statement_end = statementEnd;
       if (range.last && range.last > statementEnd) issues.push(`Last ${dateBasis} date ${range.last} falls after statement_end ${statementEnd}`);
     }
+    if (profile.newest_first === true && ordering.order !== "descending") {
+      issues.push(`Statement profile says newest_first=true, but the staged file appears ${ordering.order} by ${dateBasis} date.`);
+    }
+    if (profile.newest_first === false && ordering.order !== "ascending") {
+      issues.push(`Statement profile says newest_first=false, but the staged file appears ${ordering.order} by ${dateBasis} date.`);
+    }
 
     console.log(JSON.stringify({
       command: "import check",
       input_path: resolve(inputPath),
+      statement_profile_path: f.statement ? resolve(f.statement) : null,
+      statement_profile: Object.keys(profile).length > 0 ? profile : null,
       date_basis: dateBasis,
-      currency: f.currency ?? null,
+      currency: currency ?? null,
       expected,
       actual,
       differences,
@@ -602,6 +738,10 @@ export function cmdImport(args: string[], params: ImportParams) {
       issues,
       missing_date_basis_events: filteredByBasis.missingBasisIds,
       event_types: eventCountsByType(scopedEvents),
+      provenance_coverage: provenance,
+      date_coverage: dates,
+      ordering,
+      duplicate_refs: duplicateRefList,
       next_steps: issues.length === 0
         ? [
           "Review the staged JSONL once more, then append with `clawbooks batch`.",
@@ -646,6 +786,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     { path: join(outDir, "README.md"), content: scaffoldReadme(kind) },
     { path: join(outDir, "mapper.mjs"), content: scaffoldMapper(kind) },
     { path: join(outDir, "mapper.py"), content: scaffoldPythonMapper(kind) },
+    ...(kind === "statement-csv" ? [{ path: join(outDir, "statement-profile.json"), content: statementProfileTemplate() }] : []),
   ];
 
   const fileResults = files.map((file) => {
