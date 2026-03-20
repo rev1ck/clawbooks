@@ -117,6 +117,10 @@ export function cmdQuickstart(params: {
         command: "clawbooks import check ... --save-session",
         storage: params.booksDir ? `${params.booksDir}/imports/sessions/*.json` : "clawbooks-import-sessions/*.json",
       },
+      reconciliation: {
+        role: "Dedicated statement reconciliation artifact for staged-vs-imported comparison",
+        command: "clawbooks import reconcile <events.jsonl> --statement profile.json",
+      },
     },
     snapshot: {
       role: "Saved derived checkpoint event in the ledger",

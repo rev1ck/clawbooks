@@ -70,8 +70,10 @@ When `--save-session` is used inside a books workspace, clawbooks writes the val
 Optional maintenance commands:
 
 ```bash
+clawbooks import sessions list
 clawbooks import mappings suggest --source statement_import
 clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
+clawbooks import reconcile staged.jsonl --statement .books/imports/statement-csv/statement-profile.json
 ```
 
 6. Append only after the staged file passes:

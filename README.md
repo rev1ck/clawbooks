@@ -196,13 +196,17 @@ clawbooks import scaffold fills-csv
 clawbooks import scaffold manual-batch
 # edit mapper.mjs or mapper.py, then run it to emit JSONL
 clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import sessions list
 clawbooks import mappings suggest --source statement_import
 clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
+clawbooks import reconcile staged.jsonl --statement statement-profile.json
 clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
 cat events.jsonl | clawbooks batch
 ```
 
 `import check --save-session` writes an operator sidecar record of the validation run. In a normal books workspace this lives under `.books/imports/sessions/`.
+`import sessions list` and `import sessions show <id|latest>` make those sidecars usable as a first-class operator surface.
+`import reconcile` produces a dedicated statement reconciliation artifact comparing staged rows, imported ledger rows, and declared statement expectations.
 `import check` also reports the resolved mappings discovery path order. If you do not pass `--mappings`, clawbooks checks the scaffold location and `.books/vendor-mappings.json`.
 When practical, ingest full source coverage first and use periods/ranges later for reporting and checking.
 

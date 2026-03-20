@@ -186,6 +186,7 @@ When the user gives you a CSV or other raw financial data:
 12. Pipe the checked file to `clawbooks batch`
 13. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
 14. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
+15. If you want a dedicated statement artifact, run `clawbooks import reconcile <events.jsonl> --statement profile.json`
 
 You are the parser. There is no import tool. You read the data and write the events.
 
@@ -206,6 +207,13 @@ If you want help maintaining recurring description hints:
 - `clawbooks import mappings check` validates a mappings file and compares it to staged imports
 - these commands are advisory only and do not update `policy.md`
 - if you do not pass `--mappings`, clawbooks checks scaffold-local paths and `.books/vendor-mappings.json`
+
+Import sessions:
+
+- `clawbooks import check ... --save-session` writes a durable sidecar record of the staged validation run
+- `clawbooks import sessions list` shows recent saved sessions
+- `clawbooks import sessions show latest` opens the most recent one
+- sessions are operational records, not ledger facts
 
 Import scaffold kinds:
 
@@ -387,7 +395,9 @@ clawbooks quickstart                   # bootstrap the workflow and resolved fil
 clawbooks import scaffold --list
 clawbooks import scaffold statement-csv
 clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import sessions list
 clawbooks import mappings suggest --source statement_import
+clawbooks import reconcile staged.jsonl --statement statement-profile.json
 clawbooks init --list-examples         # show bundled policy examples
 clawbooks init --books .books-personal # creates named books dir
 clawbooks init --example simple        # use the cash-basis example

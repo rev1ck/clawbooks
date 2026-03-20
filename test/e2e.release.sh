@@ -47,6 +47,10 @@ EOF
     "${cli[@]}" import check staged.jsonl --statement statement-profile.json --save-session --session-id e2e-session > import-check.json
     grep -q '"status": "ok"' import-check.json || { echo "FAIL: import check should pass"; exit 1; }
     test -f ".books/imports/sessions/e2e-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
+    "${cli[@]}" import sessions list > import-sessions.json
+    grep -q '"import_session": "e2e-session"' import-sessions.json || { echo "FAIL: import sessions should list the saved session"; exit 1; }
+    "${cli[@]}" import reconcile staged.jsonl --statement statement-profile.json > import-reconcile.json
+    grep -q '"command": "import reconcile"' import-reconcile.json || { echo "FAIL: import reconcile should produce an artifact"; exit 1; }
 
     "${cli[@]}" record '{"source":"manual","type":"opening_balance","ts":"2026-03-01T00:00:00.000Z","data":{"amount":1000,"currency":"USD","account":"checking","category":"cash"}}' >/dev/null
     "${cli[@]}" batch < staged.jsonl >/dev/null

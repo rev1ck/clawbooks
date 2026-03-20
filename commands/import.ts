@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { positional, flags } from "../cli-helpers.js";
 import { round2, sortByTimestamp } from "../reporting.js";
@@ -33,6 +33,40 @@ type VendorMapping = {
   category?: string;
   confidence?: string;
   notes?: string;
+};
+
+type ImportSessionRecord = {
+  import_session: string;
+  session_schema_version: string;
+  created_at: string;
+  recorded_via: string;
+  operator_identity: string | null;
+  notes: string | null;
+  mapper_path: string | null;
+  scaffold_kind: string | null;
+  input_path: string;
+  statement_profile_path: string | null;
+  status: string;
+  workflow_state: string;
+  date_basis: string;
+  currency: string | null;
+  expected: Record<string, number | string>;
+  actual: Record<string, number | string | null>;
+  differences: Record<string, number>;
+  issue_count: number;
+  issues: string[];
+  source_coverage: Record<string, unknown>;
+  input_event_count: number;
+  filtered_event_count: number;
+  scoped_event_count: number;
+  provenance_coverage: ReturnType<typeof provenanceCoverage>;
+  date_coverage: ReturnType<typeof dateCoverage>;
+  mapping_diagnostics: Record<string, unknown>;
+  ordering: {
+    filtered: ReturnType<typeof orderingProfile>;
+    scoped: ReturnType<typeof orderingProfile>;
+  };
+  duplicate_refs: string[];
 };
 
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
@@ -334,6 +368,29 @@ function validateMappingsFile(mappings: VendorMapping[]) {
     overlapping_matches: overlaps.slice(0, 20),
     incomplete_mappings: incompleteMappings.slice(0, 20),
   };
+}
+
+function sessionsDirFor(booksDir: string | null): string {
+  return booksDir && existsSync(booksDir)
+    ? resolve(booksDir, "imports", "sessions")
+    : resolve("clawbooks-import-sessions");
+}
+
+function readSessionRecord(path: string): ImportSessionRecord | null {
+  try {
+    return JSON.parse(readFileSync(path, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function listSessionFiles(booksDir: string | null): string[] {
+  const dir = sessionsDirFor(booksDir);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => resolve(dir, name))
+    .sort();
 }
 
 function readEventsFile(path: string): LedgerEvent[] {
@@ -1018,6 +1075,176 @@ export function cmdImport(args: string[], params: ImportParams) {
   const f = flags(args);
   const p = positional(args);
 
+  if (p[0] === "sessions") {
+    const action = p[1] ?? "list";
+    const files = listSessionFiles(params.booksDir);
+    const sessions = files
+      .map((path) => ({ path, session: readSessionRecord(path) }))
+      .filter((entry): entry is { path: string; session: ImportSessionRecord } => entry.session !== null)
+      .sort((a, b) => a.session.created_at.localeCompare(b.session.created_at));
+
+    if (action === "list") {
+      console.log(JSON.stringify({
+        command: "import sessions list",
+        sessions_dir: sessionsDirFor(params.booksDir),
+        session_count: sessions.length,
+        sessions: sessions.slice(-20).reverse().map(({ path, session }) => ({
+          import_session: session.import_session,
+          created_at: session.created_at,
+          status: session.status,
+          workflow_state: session.workflow_state,
+          input_path: session.input_path,
+          statement_profile_path: session.statement_profile_path,
+          operator_identity: session.operator_identity,
+          path,
+        })),
+        next_steps: sessions.length === 0
+          ? ["Run `clawbooks import check ... --save-session` to create an import session record."]
+          : ["Use `clawbooks import sessions show <session-id>` to inspect a specific saved session."],
+      }, null, 2));
+      return;
+    }
+
+    if (action === "show") {
+      const target = p[2];
+      if (!target) {
+        console.error("Usage: clawbooks import sessions show <session-id|latest>");
+        process.exit(1);
+      }
+      const match = target === "latest"
+        ? sessions.at(-1)
+        : sessions.find(({ session, path }) => session.import_session === target || path.endsWith(`/${target}.json`));
+      if (!match) {
+        console.error(`No import session found for "${target}".`);
+        process.exit(1);
+      }
+      console.log(JSON.stringify({
+        command: "import sessions show",
+        path: match.path,
+        ...match.session,
+      }, null, 2));
+      return;
+    }
+
+    console.error("Usage: clawbooks import sessions <list|show> [session-id|latest]");
+    process.exit(1);
+  }
+
+  if (p[0] === "reconcile") {
+    const inputPath = p[1];
+    if (!inputPath || !f.statement) {
+      console.error("Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--mappings PATH] [--out PATH] [--recorded-by NAME] [--notes TEXT]");
+      process.exit(1);
+    }
+
+    const profile = readStatementProfile(resolve(f.statement));
+    const dateBasis = (f["date-basis"] ?? profile.date_basis ?? "ledger") as DateBasis;
+    if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
+      console.error("Invalid --date-basis. Use ledger, transaction, or posting.");
+      process.exit(1);
+    }
+
+    const rawEvents = readEventsFile(resolve(inputPath));
+    let stagedEvents = rawEvents;
+    const currency = f.currency ?? profile.currency;
+    if (currency) stagedEvents = stagedEvents.filter((event) => String(event.data.currency) === currency);
+    if (profile.source) stagedEvents = stagedEvents.filter((event) => event.source === profile.source);
+    const sortedStaged = sortByTimestamp(stagedEvents);
+    const statementStart = f["statement-start"] ?? profile.statement_start;
+    const statementEnd = f["statement-end"] ?? profile.statement_end;
+    const stagedByBasis = filterByDateBasis(sortedStaged, {
+      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
+      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
+      basis: dateBasis,
+    });
+    const scopedStaged = stagedByBasis.events;
+    const stagedTotals = sumBySign(scopedStaged);
+
+    const allLedger = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
+    let imported = allLedger;
+    if (profile.source) imported = imported.filter((event) => event.source === profile.source);
+    if (currency) imported = imported.filter((event) => String(event.data.currency) === currency);
+    const importedByBasis = filterByDateBasis(sortByTimestamp(imported), {
+      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
+      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
+      basis: dateBasis,
+    });
+    const importedScoped = importedByBasis.events;
+    const importedTotals = sumBySign(importedScoped);
+
+    const skippedRows = Math.max(0, sortedStaged.length - scopedStaged.length - stagedByBasis.missingBasisIds.length);
+    const expectedClosing = profile.closing_balance ?? null;
+    const expectedOpening = profile.opening_balance ?? null;
+    const stagedClosing = expectedOpening !== null ? round2(Number(expectedOpening) + stagedTotals.net) : null;
+    const importedClosing = expectedOpening !== null ? round2(Number(expectedOpening) + importedTotals.net) : null;
+    const unexplainedDeltas = {
+      count: importedScoped.length - scopedStaged.length,
+      debits: round2(importedTotals.debits - stagedTotals.debits),
+      credits: round2(importedTotals.credits - stagedTotals.credits),
+      net_movement: round2(importedTotals.net - stagedTotals.net),
+      closing_balance: expectedClosing !== null && importedClosing !== null ? round2(importedClosing - Number(expectedClosing)) : null,
+    };
+    const artifact = {
+      command: "import reconcile",
+      workflow_state: Math.abs(unexplainedDeltas.count) === 0
+        && Math.abs(unexplainedDeltas.debits) < 0.01
+        && Math.abs(unexplainedDeltas.credits) < 0.01
+        && Math.abs(unexplainedDeltas.net_movement) < 0.01
+        ? "statement_aligned"
+        : "needs_reconciliation",
+      what_matters: "This statement reconciliation artifact compares the staged import, the current ledger slice, and the declared statement expectations.",
+      statement: {
+        statement_id: profile.statement_id ?? null,
+        source: profile.source ?? null,
+        currency: currency ?? null,
+        date_basis: dateBasis,
+        statement_start: statementStart ?? null,
+        statement_end: statementEnd ?? null,
+        opening_balance: expectedOpening,
+        closing_balance: expectedClosing,
+        newest_first: profile.newest_first ?? null,
+      },
+      staged: {
+        input_path: resolve(inputPath),
+        row_count: sortedStaged.length,
+        scoped_row_count: scopedStaged.length,
+        missing_date_basis_events: stagedByBasis.missingBasisIds.length,
+        skipped_rows: skippedRows,
+        debits: stagedTotals.debits,
+        credits: stagedTotals.credits,
+        net_movement: stagedTotals.net,
+        closing_balance: stagedClosing,
+        first_date: dateRange(scopedStaged, dateBasis).first,
+        last_date: dateRange(scopedStaged, dateBasis).last,
+      },
+      imported: {
+        ledger_path: resolve(params.ledgerPath),
+        row_count: importedScoped.length,
+        missing_date_basis_events: importedByBasis.missingBasisIds.length,
+        debits: importedTotals.debits,
+        credits: importedTotals.credits,
+        net_movement: importedTotals.net,
+        closing_balance: importedClosing,
+        first_date: dateRange(importedScoped, dateBasis).first,
+        last_date: dateRange(importedScoped, dateBasis).last,
+      },
+      unexplained_deltas: unexplainedDeltas,
+      next_best_command: Math.abs(unexplainedDeltas.count) === 0
+        && Math.abs(unexplainedDeltas.debits) < 0.01
+        && Math.abs(unexplainedDeltas.credits) < 0.01
+        ? "clawbooks review"
+        : "clawbooks import check",
+    };
+
+    if (f.out) {
+      const outPath = resolve(f.out);
+      writeFileSync(outPath, JSON.stringify(artifact, null, 2) + "\n", "utf-8");
+    }
+
+    console.log(JSON.stringify(artifact, null, 2));
+    return;
+  }
+
   if (p[0] === "mappings") {
     const action = p[1];
     if (!action || action === "--list" || action === "list" || f.list === "true") {
@@ -1306,15 +1533,18 @@ export function cmdImport(args: string[], params: ImportParams) {
 
     if (f["save-session"] === "true") {
       const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-      const sessionsDir = params.booksDir && existsSync(params.booksDir)
-        ? resolve(params.booksDir, "imports", "sessions")
-        : resolve("clawbooks-import-sessions");
+      const sessionsDir = sessionsDirFor(params.booksDir);
       mkdirSync(sessionsDir, { recursive: true });
       const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
-      const sessionRecord = {
+      const sessionRecord: ImportSessionRecord = {
         import_session: sessionId,
+        session_schema_version: "clawbooks.import-session.v1",
         created_at: new Date().toISOString(),
         recorded_via: "clawbooks import check",
+        operator_identity: f["recorded-by"] ?? null,
+        notes: f.notes ?? null,
+        mapper_path: f.mapper ? resolve(f.mapper) : null,
+        scaffold_kind: f.scaffold ?? null,
         input_path: resolve(inputPath),
         statement_profile_path: f.statement ? resolve(f.statement) : null,
         status: issues.length === 0 ? "ok" : "mismatch",

@@ -89,6 +89,10 @@ Setup:
                                       Validate a staged import file before append
   import      mappings <action> [flags]
                                       Surface or validate optional vendor mapping hints
+  import      sessions <action> [flags]
+                                      Inspect saved import-session sidecars
+  import      reconcile <events.jsonl> [flags]
+                                      Build a statement reconciliation artifact
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
@@ -100,6 +104,7 @@ Import:
   import scaffold --list      List available import scaffolds
   import check staged.jsonl   Check a staged JSONL import against explicit expectations
   import mappings suggest     Suggest recurring vendor hints from ledger history
+  import sessions list        List saved import-session records
 
 Inspect:
   log     [flags]             Print ledger events
@@ -143,6 +148,7 @@ Quick examples:
   clawbooks import check staged.jsonl --statement statement-profile.json --save-session
   clawbooks import mappings suggest --source statement_import
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
+  clawbooks import reconcile staged.jsonl --statement statement-profile.json
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
   clawbooks policy --path
   clawbooks policy lint
@@ -236,6 +242,8 @@ function commandHelp(cmd?: string, args: string[] = []): string | null {
   const key = cmd === "import" && sub === "check" ? "import-check"
     : cmd === "import" && sub === "scaffold" ? "import-scaffold"
     : cmd === "import" && sub === "mappings" ? "import-mappings"
+    : cmd === "import" && sub === "sessions" ? "import-sessions"
+    : cmd === "import" && sub === "reconcile" ? "import-reconcile"
     : cmd === "review" && sub === "batch" ? "review-batch"
     : cmd ?? "";
 
@@ -278,6 +286,20 @@ Work with optional vendor-mappings.json files as factual recurring-description h
 Examples:
   clawbooks import mappings suggest --source statement_import
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json`,
+    "import-sessions": `Usage: clawbooks import sessions <list|show> [session-id|latest]
+
+Inspect saved import-session sidecars written by \`clawbooks import check --save-session\`.
+
+Examples:
+  clawbooks import sessions list
+  clawbooks import sessions show latest`,
+    "import-reconcile": `Usage: clawbooks import reconcile <events.jsonl> --statement profile.json [--out PATH]
+
+Build a statement reconciliation artifact that compares the staged import, current ledger slice, and declared statement expectations.
+
+Examples:
+  clawbooks import reconcile staged.jsonl --statement statement-profile.json
+  clawbooks import reconcile staged.jsonl --statement statement-profile.json --out reconcile-artifact.json`,
     review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type]
 
 Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.

@@ -157,6 +157,8 @@ export function cmdDoctor(params: {
         recommendations: [
           "Use `clawbooks import scaffold <kind>` when starting a new importer.",
           "Use `clawbooks import check ... --statement ... --save-session` before appending staged statement imports.",
+          "Use `clawbooks import sessions list` to inspect prior staged import runs.",
+          "Use `clawbooks import reconcile <events.jsonl> --statement profile.json` to produce a statement reconciliation artifact.",
           "Use `clawbooks import mappings suggest` or `clawbooks import mappings check` only as optional factual consistency aids.",
           "Prefer importing full source coverage when practical and applying report periods later.",
           "Keep vendor mappings near the scaffold or in .books/vendor-mappings.json so import check can discover them.",

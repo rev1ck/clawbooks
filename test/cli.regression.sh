@@ -247,6 +247,14 @@ HELP_IMPORT_MAPPINGS="$EMPTY_DIR3/help-import-mappings.txt"
 (cd "$EMPTY_DIR3" && $CLI import mappings --help 2>&1) > "$HELP_IMPORT_MAPPINGS"
 grep -q 'Usage: clawbooks import mappings' "$HELP_IMPORT_MAPPINGS" || { echo "FAIL: import mappings --help should print command help"; exit 1; }
 
+HELP_IMPORT_SESSIONS="$EMPTY_DIR3/help-import-sessions.txt"
+(cd "$EMPTY_DIR3" && $CLI import sessions --help 2>&1) > "$HELP_IMPORT_SESSIONS"
+grep -q 'Usage: clawbooks import sessions' "$HELP_IMPORT_SESSIONS" || { echo "FAIL: import sessions --help should print command help"; exit 1; }
+
+HELP_IMPORT_RECONCILE="$EMPTY_DIR3/help-import-reconcile.txt"
+(cd "$EMPTY_DIR3" && $CLI import reconcile --help 2>&1) > "$HELP_IMPORT_RECONCILE"
+grep -q 'Usage: clawbooks import reconcile' "$HELP_IMPORT_RECONCILE" || { echo "FAIL: import reconcile --help should print command help"; exit 1; }
+
 HELP_REVIEW_BATCH="$EMPTY_DIR3/help-review-batch.txt"
 (cd "$EMPTY_DIR3" && $CLI review batch --help 2>&1) > "$HELP_REVIEW_BATCH"
 grep -q 'Usage: clawbooks review batch' "$HELP_REVIEW_BATCH" || { echo "FAIL: review batch --help should print command help"; exit 1; }
@@ -297,6 +305,22 @@ grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import 
 grep -q '"what_matters"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should include operator-facing summary text"; exit 1; }
 grep -q '"source_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report source coverage"; exit 1; }
 test -f "$IMPORT_ROOT/.books/imports/sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
+
+IMPORT_SESSIONS_LIST="$IMPORT_ROOT/import-sessions-list.json"
+(cd "$IMPORT_ROOT" && $CLI import sessions list 2>&1) > "$IMPORT_SESSIONS_LIST"
+grep -q '"command": "import sessions list"' "$IMPORT_SESSIONS_LIST" || { echo "FAIL: import sessions list should identify itself"; exit 1; }
+grep -q '"import_session": "test-session"' "$IMPORT_SESSIONS_LIST" || { echo "FAIL: import sessions list should include saved session"; exit 1; }
+
+IMPORT_SESSIONS_SHOW="$IMPORT_ROOT/import-sessions-show.json"
+(cd "$IMPORT_ROOT" && $CLI import sessions show latest 2>&1) > "$IMPORT_SESSIONS_SHOW"
+grep -q '"command": "import sessions show"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should identify itself"; exit 1; }
+grep -q '"session_schema_version": "clawbooks.import-session.v1"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should expose session schema version"; exit 1; }
+
+IMPORT_RECONCILE_JSON="$IMPORT_ROOT/import-reconcile.json"
+(cd "$IMPORT_ROOT" && $CLI import reconcile staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_RECONCILE_JSON"
+grep -q '"command": "import reconcile"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should identify itself"; exit 1; }
+grep -q '"statement"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should include statement metadata"; exit 1; }
+grep -q '"unexplained_deltas"' "$IMPORT_RECONCILE_JSON" || { echo "FAIL: import reconcile should include unexplained deltas"; exit 1; }
 
 IMPORT_CHECK_DISCOVERY="$IMPORT_ROOT/import-check-discovery.json"
 (cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_CHECK_DISCOVERY"
