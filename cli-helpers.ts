@@ -42,6 +42,11 @@ export function positional(args: string[]): string[] {
 
 export function normalizeDateBoundary(value: string, boundary: "after" | "before"): string {
   if (value.includes("T")) return value;
+  if (/^\d{4}$/.test(value)) {
+    return boundary === "after"
+      ? `${value}-01-01T00:00:00.000Z`
+      : `${value}-12-31T23:59:59.999Z`;
+  }
   if (/^\d{4}-\d{2}$/.test(value)) {
     const [y, m] = value.split("-").map(Number);
     const lastDay = new Date(y, m, 0).getDate();

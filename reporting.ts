@@ -6,7 +6,11 @@ export function round2(n: number): number {
 }
 
 export function sortByTimestamp(events: LedgerEvent[]): LedgerEvent[] {
-  return [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id));
+  return [...events].sort((a, b) =>
+    a.ts.localeCompare(b.ts)
+    || String(a.id ?? "").localeCompare(String(b.id ?? ""))
+    || JSON.stringify(a.data).localeCompare(JSON.stringify(b.data))
+  );
 }
 
 export function buildReportingSections(events: LedgerEvent[]) {

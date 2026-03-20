@@ -108,6 +108,28 @@ assert(contextVerbose.includes('"by_type"'), "verbose context should include the
 console.log("cli.regression.sh: ok");
 EOF
 
+STAGED_NO_IDS="$ROOT/staged-no-ids.jsonl"
+cat > "$STAGED_NO_IDS" <<'EOF'
+{"ts":"2026-01-02T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-5,"currency":"USD","posting_date":"2026-01-02"}}
+{"ts":"2026-01-02T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":10,"currency":"USD","posting_date":"2026-01-02"}}
+EOF
+IMPORT_NO_IDS_JSON="$ROOT/import-no-ids.json"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js import check "$STAGED_NO_IDS" > "$IMPORT_NO_IDS_JSON"
+node - <<'EOF' "$IMPORT_NO_IDS_JSON"
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (report.command !== "import check") throw new Error("import check should return a report for staged rows without ids");
+if (report.actual.count !== 2) throw new Error("import check should process both staged rows without ids");
+EOF
+
+VERIFY_YEAR_JSON="$ROOT/verify-year.json"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js verify 2026 > "$VERIFY_YEAR_JSON"
+node - <<'EOF' "$VERIFY_YEAR_JSON"
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (report.event_count !== 6) throw new Error(`verify 2026 should include the full 2026 slice, got ${report.event_count}`);
+EOF
+
 # --- .books/ directory tests ---
 
 BOOKS_ROOT="$(mktemp -d)"
@@ -268,7 +290,7 @@ grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import che
 grep -q '"filtered_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report filtered event count"; exit 1; }
 grep -q '"mapping_diagnostics"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping diagnostics"; exit 1; }
 grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping coverage"; exit 1; }
-test -f "$IMPORT_ROOT/clawbooks-import-sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
+test -f "$IMPORT_ROOT/.books/imports/sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
 
 IMPORT_MAPPINGS_SUGGEST="$IMPORT_ROOT/import-mappings-suggest.json"
 (cd "$IMPORT_ROOT" && $CLI import mappings suggest --source statement_import 2>&1) > "$IMPORT_MAPPINGS_SUGGEST"
