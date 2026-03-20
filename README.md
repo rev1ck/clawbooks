@@ -189,13 +189,20 @@ clawbooks policy --example simple
 Import:
 
 ```bash
+clawbooks import scaffold --list
 clawbooks import scaffold statement-csv
 clawbooks import scaffold generic-csv
+clawbooks import scaffold fills-csv
+clawbooks import scaffold manual-batch
 # edit mapper.mjs or mapper.py, then run it to emit JSONL
-clawbooks import check staged.jsonl --statement statement-profile.json
+clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import mappings suggest --source statement_import
+clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
 clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
 cat events.jsonl | clawbooks batch
 ```
+
+`import check --save-session` writes an operator sidecar record of the validation run. In a normal books workspace this lives under `.books/imports/sessions/`.
 
 Inspect:
 
@@ -215,8 +222,12 @@ If you are starting from scratch, the fastest path is usually:
 clawbooks init
 clawbooks quickstart
 clawbooks import scaffold statement-csv
-clawbooks import check staged.jsonl --statement statement-profile.json
+clawbooks import check staged.jsonl --statement statement-profile.json --save-session
 ```
+
+For a full statement-shaped walkthrough, see [docs/statement-import-example.md](./docs/statement-import-example.md).
+
+`vendor-mappings.json` is optional and factual. It is a reusable hint file for recurring source descriptions. It does not replace or override `policy.md`.
 
 Analyze and report:
 
@@ -232,6 +243,8 @@ clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --conf
 clawbooks assets --as-of 2026-03-31
 clawbooks pack 2026-03 --out ./march-pack
 ```
+
+`review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
 
 Maintenance:
 

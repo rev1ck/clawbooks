@@ -201,6 +201,7 @@ grep -q '"readiness": "missing"' "$DOCTOR_JSON" || { echo "FAIL: doctor should r
 grep -q '"ledger_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include ledger health"; exit 1; }
 grep -q '"snapshot_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include snapshot health"; exit 1; }
 grep -q '"operator_mistakes"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include operator warnings"; exit 1; }
+grep -q '"import_workflow"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include import workflow guidance"; exit 1; }
 grep -q 'Run `clawbooks init`' "$DOCTOR_JSON" || { echo "FAIL: doctor should recommend init when books are missing"; exit 1; }
 
 QUICKSTART_JSON="$EMPTY_DIR3/quickstart.json"
@@ -209,6 +210,23 @@ grep -q '"command": "quickstart"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart
 grep -q '"core_files"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should define core files"; exit 1; }
 grep -q '"event_schema"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should point to the event schema"; exit 1; }
 grep -q '"produce_outputs"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe output generation workflow"; exit 1; }
+grep -q '"import_support"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe import support surfaces"; exit 1; }
+
+HELP_SUMMARY="$EMPTY_DIR3/help-summary.txt"
+(cd "$EMPTY_DIR3" && $CLI summary --help 2>&1) > "$HELP_SUMMARY"
+grep -q 'Usage: clawbooks summary' "$HELP_SUMMARY" || { echo "FAIL: summary --help should print command help"; exit 1; }
+
+HELP_IMPORT="$EMPTY_DIR3/help-import.txt"
+(cd "$EMPTY_DIR3" && $CLI import check --help 2>&1) > "$HELP_IMPORT"
+grep -q 'Usage: clawbooks import check' "$HELP_IMPORT" || { echo "FAIL: import check --help should print command help"; exit 1; }
+
+HELP_IMPORT_MAPPINGS="$EMPTY_DIR3/help-import-mappings.txt"
+(cd "$EMPTY_DIR3" && $CLI import mappings --help 2>&1) > "$HELP_IMPORT_MAPPINGS"
+grep -q 'Usage: clawbooks import mappings' "$HELP_IMPORT_MAPPINGS" || { echo "FAIL: import mappings --help should print command help"; exit 1; }
+
+HELP_REVIEW_BATCH="$EMPTY_DIR3/help-review-batch.txt"
+(cd "$EMPTY_DIR3" && $CLI review batch --help 2>&1) > "$HELP_REVIEW_BATCH"
+grep -q 'Usage: clawbooks review batch' "$HELP_REVIEW_BATCH" || { echo "FAIL: review batch --help should print command help"; exit 1; }
 rm -rf "$EMPTY_DIR3"
 
 # Test 8c: import scaffold emits files without institution-specific magic
@@ -220,23 +238,48 @@ test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: import scaffold should create mapper"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: import scaffold should create python mapper"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/statement-profile.json" || { echo "FAIL: statement scaffold should create statement profile template"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/vendor-mappings.json" || { echo "FAIL: statement scaffold should create vendor mappings template"; exit 1; }
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: statement scaffold should mention transaction_date"; exit 1; }
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: python statement scaffold should mention transaction_date"; exit 1; }
+grep -q 'vendor-mappings.json' "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL: statement scaffold readme should mention vendor mappings"; exit 1; }
+mkdir -p "$IMPORT_ROOT/.books"
+cat > "$IMPORT_ROOT/.books/ledger.jsonl" <<'EOF'
+{"ts":"2026-02-01T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-10,"currency":"USD","description":"NETFLIX","category":"software","confidence":"inferred"},"id":"hist1","prev":"genesis"}
+{"ts":"2026-02-15T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-12,"currency":"USD","description":"NETFLIX","category":"software","confidence":"inferred"},"id":"hist2","prev":"x"}
+{"ts":"2026-02-28T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-11,"currency":"USD","description":"NETFLIX","category":"software","confidence":"inferred"},"id":"hist3","prev":"y"}
+EOF
+cat > "$IMPORT_ROOT/.books/policy.md" <<'EOF'
+# test policy
+EOF
 cat > "$IMPORT_ROOT/staged.jsonl" <<'EOF'
-{"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
-{"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
+{"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","description":"PAYROLL","category":"service_revenue","confidence":"inferred","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
+{"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","description":"APPLE.COM/BILL","category":"software_and_digital_services","confidence":"inferred","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
 EOF
 cat > "$IMPORT_ROOT/statement-profile.json" <<'EOF'
 {"statement_id":"stmt-1","source":"statement_import","currency":"USD","date_basis":"posting","statement_start":"2026-03-01","statement_end":"2026-03-31","opening_balance":1000,"closing_balance":900,"count":2,"debits":-300,"credits":200,"newest_first":false}
 EOF
 IMPORT_CHECK_JSON="$IMPORT_ROOT/import-check.json"
-(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_CHECK_JSON"
+(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json --mappings clawbooks-imports/statement-csv/vendor-mappings.json --save-session --session-id test-session 2>&1) > "$IMPORT_CHECK_JSON"
 grep -q '"command": "import check"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should identify itself"; exit 1; }
 grep -q '"status": "ok"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should reconcile staged file"; exit 1; }
 grep -q '"closing_balance": 900' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should compute closing balance"; exit 1; }
 grep -q '"statement_profile"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report loaded statement profile"; exit 1; }
 grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report provenance coverage"; exit 1; }
 grep -q '"filtered_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report filtered event count"; exit 1; }
+grep -q '"mapping_diagnostics"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping diagnostics"; exit 1; }
+grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping coverage"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-import-sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
+
+IMPORT_MAPPINGS_SUGGEST="$IMPORT_ROOT/import-mappings-suggest.json"
+(cd "$IMPORT_ROOT" && $CLI import mappings suggest --source statement_import 2>&1) > "$IMPORT_MAPPINGS_SUGGEST"
+grep -q '"command": "import mappings suggest"' "$IMPORT_MAPPINGS_SUGGEST" || { echo "FAIL: import mappings suggest should identify itself"; exit 1; }
+grep -q '"NETFLIX"' "$IMPORT_MAPPINGS_SUGGEST" || { echo "FAIL: import mappings suggest should surface stable recurring descriptions"; exit 1; }
+
+IMPORT_MAPPINGS_CHECK="$IMPORT_ROOT/import-mappings-check.json"
+(cd "$IMPORT_ROOT" && $CLI import mappings check staged.jsonl --mappings clawbooks-imports/statement-csv/vendor-mappings.json 2>&1) > "$IMPORT_MAPPINGS_CHECK"
+grep -q '"command": "import mappings check"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should identify itself"; exit 1; }
+grep -q '"file_checks"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should report file checks"; exit 1; }
+grep -q '"event_diagnostics"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should report event diagnostics"; exit 1; }
 
 cat > "$IMPORT_ROOT/staged-newest-first.jsonl" <<'EOF'
 {"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
@@ -420,6 +463,7 @@ REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 2>&1) > "$REVIEW_DOCS"
 grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
 grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
+grep -q '"reason_in_queue"' "$REVIEW_DOCS" || { echo "FAIL: review should explain why items are in queue"; exit 1; }
 
 REVIEW_FILTERED="$DOCS_ROOT/review-filtered.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 --confidence inferred --min-magnitude 100 --group-by category 2>&1) > "$REVIEW_FILTERED"

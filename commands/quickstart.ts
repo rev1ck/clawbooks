@@ -73,6 +73,7 @@ export function cmdQuickstart(params: {
       "Read policy.md.",
       "Read event-schema.md if you are importing or revising event shapes.",
       "Use `clawbooks import scaffold <kind>` if you want a mapper template before writing import code.",
+      "For statement-shaped imports, run `clawbooks import check ... --statement ... --save-session` before append.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
       "Run `clawbooks verify` and `clawbooks reconcile` after imports when source totals are available.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
@@ -81,10 +82,12 @@ export function cmdQuickstart(params: {
       import: [
         "Inspect the source files and normalize them into clawbooks events.",
         "If you need a starting point, generate an editable template with `clawbooks import scaffold <kind>`.",
+        "If recurring descriptions matter, keep optional factual hints in vendor-mappings.json and let the mapper consult that file.",
         "Preserve provenance such as data.ref, data.source_doc, data.source_row, data.source_hash, and data.provenance.",
         "Write events with `clawbooks record` or `clawbooks batch`.",
       ],
       validate: [
+        "Use `clawbooks import check` to compare staged JSONL against statement expectations before append.",
         "Use `clawbooks verify` for hash-chain, duplicate, sign, and balance checks.",
         "Use `clawbooks reconcile` to compare imported rows to statement or source totals.",
         "Use `clawbooks review` to surface events needing classification review.",
@@ -95,8 +98,23 @@ export function cmdQuickstart(params: {
         "Use `clawbooks documents` for receivables, payables, settlement, and aging views.",
         "Use `clawbooks assets` for asset register and depreciation views.",
         "Use `clawbooks pack` for exportable audit packs.",
-        "Combine these with policy.md to produce P&L, balance sheet, cash flow, tax views, reconciliations, management summaries, and custom reporting cuts.",
+        "Combine these with policy.md to produce P&L, balance sheet, cash flow, tax views, reconciliations, and custom reporting cuts.",
       ],
+    },
+    import_support: {
+      mappings: {
+        role: "Optional recurring vendor/category hint file for import-time consistency",
+        command_surface: [
+          "clawbooks import mappings suggest",
+          "clawbooks import mappings check",
+        ],
+        rule: "Vendor mappings are advisory operator aids. They do not override policy.md.",
+      },
+      sessions: {
+        role: "Optional sidecar records of staged import validation runs",
+        command: "clawbooks import check ... --save-session",
+        storage: params.booksDir ? `${params.booksDir}/imports/sessions/*.json` : "clawbooks-import-sessions/*.json",
+      },
     },
     snapshot: {
       role: "Saved derived checkpoint event in the ledger",

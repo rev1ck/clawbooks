@@ -36,20 +36,33 @@ function visibleReviewItems(args: string[], ledgerPath: string): {
     .filter((e) => !reclassified.has(e.id))
     .filter((e) => !confirmed.has(e.id));
 
-  const tiers: Record<string, LedgerEvent[]> = { unclear: [], inferred: [], unset: [] };
+  const candidates: LedgerEvent[] = [];
   for (const e of reviewable) {
     const confidence = String(e.data.confidence ?? "unset");
     if (confidence === "clear") continue;
     const amount = Number(e.data.amount);
     if (minMagnitude !== null && Number.isFinite(amount) && Math.abs(amount) < minMagnitude) continue;
     if (requestedConfidence && !requestedConfidence.has(confidence)) continue;
-    if (confidence === "unclear") tiers.unclear.push(e);
-    else if (confidence === "inferred") tiers.inferred.push(e);
-    else tiers.unset.push(e);
+    candidates.push(e);
   }
 
-  let items = [...tiers.unclear, ...tiers.inferred, ...tiers.unset];
+  const confidenceRank: Record<string, number> = { unclear: 0, inferred: 1, unset: 2 };
+  let items = [...candidates].sort((a, b) => {
+    const aAmount = Math.abs(Number(a.data.amount) || 0);
+    const bAmount = Math.abs(Number(b.data.amount) || 0);
+    return bAmount - aAmount
+      || (confidenceRank[String(a.data.confidence ?? "unset")] ?? 9) - (confidenceRank[String(b.data.confidence ?? "unset")] ?? 9)
+      || a.ts.localeCompare(b.ts)
+      || a.id.localeCompare(b.id);
+  });
   if (limit !== null) items = items.slice(0, limit);
+  const tiers: Record<string, LedgerEvent[]> = { unclear: [], inferred: [], unset: [] };
+  for (const event of candidates) {
+    const confidence = String(event.data.confidence ?? "unset");
+    if (confidence === "unclear") tiers.unclear.push(event);
+    else if (confidence === "inferred") tiers.inferred.push(event);
+    else tiers.unset.push(event);
+  }
   const visibleIds = new Set(items.map((event) => event.id));
   const visibleTiers: Record<string, LedgerEvent[]> = {
     unclear: tiers.unclear.filter((event) => visibleIds.has(event.id)),
@@ -184,11 +197,18 @@ export function cmdReview(args: string[], ledgerPath: string) {
     : null;
   const nextActions = items.slice(0, 10).map((event) => {
     const category = String(event.data.category ?? event.type);
+    const confidence = String(event.data.confidence ?? "unset");
     return {
       id: event.id,
-      confidence: String(event.data.confidence ?? "unset"),
+      confidence,
       amount: Number(event.data.amount),
       category,
+      reason_in_queue: confidence === "unclear"
+        ? "confidence is unclear"
+        : confidence === "inferred"
+          ? "confidence is inferred"
+          : "confidence is missing or unset",
+      source_description: String(event.data.description ?? ""),
       confirm_command: `clawbooks record '${JSON.stringify({ source: "manual", type: "confirm", data: { original_id: event.id, confidence: "clear", confirmed_by: "reviewer", notes: "replace with review note" } })}'`,
       reclassify_command: `clawbooks record '${JSON.stringify({ source: "manual", type: "reclassify", data: { original_id: event.id, new_category: category } })}'`,
     };
@@ -219,6 +239,28 @@ export function cmdReview(args: string[], ledgerPath: string) {
     queue: queueSummary,
     groups,
     next_actions: nextActions,
-    items,
+    items: items.map((event) => {
+      const confidence = String(event.data.confidence ?? "unset");
+      const amount = Number(event.data.amount);
+      return {
+        id: event.id,
+        ts: event.ts,
+        source: event.source,
+        type: event.type,
+        category: String(event.data.category ?? event.type),
+        amount,
+        magnitude: Math.abs(Number.isFinite(amount) ? amount : 0),
+        confidence,
+        source_description: String(event.data.description ?? ""),
+        reason_in_queue: confidence === "unclear"
+          ? "confidence is unclear"
+          : confidence === "inferred"
+            ? "confidence is inferred"
+            : "confidence is missing or unset",
+      };
+    }),
+    message: items.length === 0
+      ? "No review items matched the current filters. Review includes inferred, unclear, and unset confidence by default."
+      : null,
   }, null, 2));
 }

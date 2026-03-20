@@ -1,12 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { positional, flags } from "../cli-helpers.js";
 import { round2, sortByTimestamp } from "../reporting.js";
 import { filterByDateBasis, type DateBasis } from "../imports.js";
-import type { LedgerEvent } from "../ledger.js";
+import { readAll, type LedgerEvent } from "../ledger.js";
+import { META_TYPES } from "../event-types.js";
 
 type ImportParams = {
   booksDir: string | null;
+  ledgerPath: string;
 };
 
 type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch";
@@ -25,7 +27,303 @@ type StatementProfile = {
   newest_first?: boolean;
 };
 
+type VendorMapping = {
+  match: string;
+  type?: string;
+  category?: string;
+  confidence?: string;
+  notes?: string;
+};
+
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
+
+function descriptionOf(event: LedgerEvent): string | null {
+  const value = event.data.description;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeVendorText(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/\d+/g, "#")
+    .replace(/[^A-Z#]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countMapEntries(values: string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const value of values) {
+    const key = value.trim();
+    if (!key) continue;
+    out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
+}
+
+function topEntry(counts: Record<string, number>): { value: string; count: number } | null {
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  return entries[0] ? { value: entries[0][0], count: entries[0][1] } : null;
+}
+
+function distinctCount(counts: Record<string, number>): number {
+  return Object.keys(counts).length;
+}
+
+function matchingMapping(description: string, mappings: VendorMapping[]): VendorMapping | null {
+  const normalizedDescription = normalizeVendorText(description);
+  const sorted = mappings
+    .filter((mapping) => typeof mapping.match === "string" && mapping.match.trim())
+    .slice()
+    .sort((a, b) => normalizeVendorText(b.match).length - normalizeVendorText(a.match).length);
+  return sorted.find((mapping) => normalizedDescription.includes(normalizeVendorText(mapping.match))) ?? null;
+}
+
+function readVendorMappings(path: string | null): { path: string | null; mappings: VendorMapping[]; issues: string[] } {
+  if (!path) return { path: null, mappings: [], issues: [] };
+  if (!existsSync(path)) return { path: resolve(path), mappings: [], issues: [`No vendor mappings file found at ${resolve(path)}`] };
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8"));
+    const mappings = Array.isArray(parsed.mappings)
+      ? parsed.mappings.filter((mapping: unknown): mapping is VendorMapping => typeof (mapping as VendorMapping | undefined)?.match === "string" && Boolean((mapping as VendorMapping).match.trim()))
+      : [];
+    const issues: string[] = [];
+    if (!Array.isArray(parsed.mappings)) issues.push("Mappings file does not contain a top-level `mappings` array.");
+    return { path: resolve(path), mappings, issues };
+  } catch {
+    return { path: resolve(path), mappings: [], issues: [`Failed to parse vendor mappings JSON from ${resolve(path)}`] };
+  }
+}
+
+function resolveVendorMappingsPath(explicitPath: string | undefined, statementPath: string | undefined, inputPath: string | undefined): string | null {
+  if (explicitPath) return resolve(explicitPath);
+  const candidates = [
+    statementPath ? join(dirname(resolve(statementPath)), "vendor-mappings.json") : null,
+    inputPath ? join(dirname(resolve(inputPath)), "vendor-mappings.json") : null,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function vendorHistory(events: LedgerEvent[]) {
+  const groups: Record<string, {
+    key: string;
+    count: number;
+    descriptions: Record<string, number>;
+    types: Record<string, number>;
+    categories: Record<string, number>;
+    confidences: Record<string, number>;
+    sources: Record<string, number>;
+    ids: string[];
+  }> = {};
+  for (const event of events) {
+    if (META_TYPES.has(event.type)) continue;
+    const description = descriptionOf(event);
+    if (!description) continue;
+    const key = normalizeVendorText(description);
+    if (!key) continue;
+    const bucket = groups[key] ?? {
+      key,
+      count: 0,
+      descriptions: {},
+      types: {},
+      categories: {},
+      confidences: {},
+      sources: {},
+      ids: [],
+    };
+    bucket.count++;
+    bucket.descriptions[description] = (bucket.descriptions[description] ?? 0) + 1;
+    bucket.types[event.type] = (bucket.types[event.type] ?? 0) + 1;
+    const category = typeof event.data.category === "string" ? event.data.category : "";
+    if (category) bucket.categories[category] = (bucket.categories[category] ?? 0) + 1;
+    const confidence = typeof event.data.confidence === "string" ? event.data.confidence : "";
+    if (confidence) bucket.confidences[confidence] = (bucket.confidences[confidence] ?? 0) + 1;
+    bucket.sources[event.source] = (bucket.sources[event.source] ?? 0) + 1;
+    bucket.ids.push(event.id);
+    groups[key] = bucket;
+  }
+  return groups;
+}
+
+function stableHistorySummary(history: ReturnType<typeof vendorHistory>[string]) {
+  const type = topEntry(history.types);
+  const category = topEntry(history.categories);
+  if (!type || !category) return null;
+  const stableType = distinctCount(history.types) === 1 && type.count === history.count;
+  const stableCategory = distinctCount(history.categories) === 1 && category.count === history.count;
+  if (!stableType || !stableCategory) return null;
+  const confidence = topEntry(history.confidences);
+  const example = topEntry(history.descriptions);
+  return {
+    type: type.value,
+    category: category.value,
+    confidence: confidence && distinctCount(history.confidences) === 1 ? confidence.value : undefined,
+    example_description: example?.value ?? null,
+    count: history.count,
+  };
+}
+
+function mappingDiagnostics(events: LedgerEvent[], mappings: VendorMapping[], ledgerHistoryEvents: LedgerEvent[]) {
+  const describedEvents = events.filter((event) => descriptionOf(event));
+  const stagedGroups = vendorHistory(events);
+  const historicalGroups = vendorHistory(ledgerHistoryEvents);
+  const mappingConflicts: Array<Record<string, unknown>> = [];
+  const historyConflicts: Array<Record<string, unknown>> = [];
+  const knownHistoryWithoutMapping: Array<Record<string, unknown>> = [];
+  const repeatedUnmapped: Array<Record<string, unknown>> = [];
+  let matchedEventCount = 0;
+  let describedEventCount = 0;
+
+  for (const event of describedEvents) {
+    const description = descriptionOf(event)!;
+    const key = normalizeVendorText(description);
+    const mapping = matchingMapping(description, mappings);
+    const historical = historicalGroups[key];
+    const stableHistorical = historical ? stableHistorySummary(historical) : null;
+    describedEventCount++;
+
+    if (mapping) {
+      matchedEventCount++;
+      const category = typeof event.data.category === "string" ? event.data.category : null;
+      const confidence = typeof event.data.confidence === "string" ? event.data.confidence : null;
+      if ((mapping.type && event.type !== mapping.type) || (mapping.category && category && category !== mapping.category) || (mapping.confidence && confidence && confidence !== mapping.confidence)) {
+        mappingConflicts.push({
+          id: event.id,
+          description,
+          mapping_match: mapping.match,
+          event_type: event.type,
+          mapped_type: mapping.type ?? null,
+          event_category: category,
+          mapped_category: mapping.category ?? null,
+          event_confidence: confidence,
+          mapped_confidence: mapping.confidence ?? null,
+        });
+      }
+    }
+
+    if (stableHistorical) {
+      const category = typeof event.data.category === "string" ? event.data.category : null;
+      if (!mapping) {
+        knownHistoryWithoutMapping.push({
+          normalized_vendor: key,
+          example_description: stableHistorical.example_description ?? description,
+          stable_count: stableHistorical.count,
+          stable_type: stableHistorical.type,
+          stable_category: stableHistorical.category,
+        });
+      }
+      if (event.type !== stableHistorical.type || (category && category !== stableHistorical.category)) {
+        historyConflicts.push({
+          id: event.id,
+          description,
+          historical_type: stableHistorical.type,
+          event_type: event.type,
+          historical_category: stableHistorical.category,
+          event_category: category,
+          historical_count: stableHistorical.count,
+        });
+      }
+    }
+  }
+
+  for (const group of Object.values(stagedGroups)) {
+    const stable = stableHistorySummary(group);
+    const example = topEntry(group.descriptions)?.value ?? null;
+    const hasMapping = mappings.some((mapping) => example ? matchingMapping(example, [mapping]) : false);
+    if (!hasMapping && group.count >= 2) {
+      repeatedUnmapped.push({
+        normalized_vendor: group.key,
+        count: group.count,
+        example_description: example,
+        stable_in_staged_file: stable !== null,
+      });
+    }
+  }
+
+  const uniqueKnownHistoryWithoutMapping = Object.values(knownHistoryWithoutMapping.reduce((acc, item) => {
+    const key = String(item.normalized_vendor);
+    acc[key] = acc[key] ?? item;
+    return acc;
+  }, {} as Record<string, Record<string, unknown>>));
+
+  return {
+    described_event_count: describedEventCount,
+    matched_event_count: matchedEventCount,
+    unmatched_described_event_count: describedEventCount - matchedEventCount,
+    mapping_conflict_count: mappingConflicts.length,
+    history_conflict_count: historyConflicts.length,
+    repeated_unmapped_vendor_count: repeatedUnmapped.length,
+    known_history_without_mapping_count: uniqueKnownHistoryWithoutMapping.length,
+    mapping_conflicts: mappingConflicts.slice(0, 10),
+    history_conflicts: historyConflicts.slice(0, 10),
+    repeated_unmapped_vendors: repeatedUnmapped.slice(0, 10),
+    known_history_without_mapping: uniqueKnownHistoryWithoutMapping.slice(0, 10),
+  };
+}
+
+function suggestMappings(events: LedgerEvent[], existingMappings: VendorMapping[], minOccurrences: number) {
+  const groups = vendorHistory(events);
+  const suggestions = Object.values(groups)
+    .filter((group) => group.count >= minOccurrences)
+    .map((group) => {
+      const stable = stableHistorySummary(group);
+      if (!stable) return null;
+      const example = stable.example_description ?? topEntry(group.descriptions)?.value ?? null;
+      if (!example) return null;
+      const existing = matchingMapping(example, existingMappings);
+      return {
+        normalized_vendor: group.key,
+        count: group.count,
+        example_description: example,
+        suggested_mapping: {
+          match: example,
+          type: stable.type,
+          category: stable.category,
+          ...(stable.confidence ? { confidence: stable.confidence } : {}),
+          notes: `Derived from ${group.count} historical ledger event(s) with stable classification.`,
+        },
+        already_covered: existing !== null,
+        existing_match: existing?.match ?? null,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((a, b) => b.count - a.count || a.normalized_vendor.localeCompare(b.normalized_vendor));
+
+  return {
+    total_candidates: suggestions.length,
+    uncovered_candidates: suggestions.filter((item) => !item.already_covered).length,
+    suggestions,
+  };
+}
+
+function validateMappingsFile(mappings: VendorMapping[]) {
+  const duplicateMatches = Object.entries(countMapEntries(mappings.map((mapping) => normalizeVendorText(mapping.match))))
+    .filter(([, count]) => count > 1)
+    .map(([match, count]) => ({ normalized_match: match, count }));
+  const overlaps: Array<{ match: string; overlaps_with: string }> = [];
+  const normalized = mappings.map((mapping) => ({ raw: mapping.match, normalized: normalizeVendorText(mapping.match) }))
+    .filter((mapping) => mapping.normalized);
+  for (let i = 0; i < normalized.length; i++) {
+    for (let j = i + 1; j < normalized.length; j++) {
+      if (normalized[i].normalized === normalized[j].normalized) continue;
+      if (normalized[i].normalized.includes(normalized[j].normalized) || normalized[j].normalized.includes(normalized[i].normalized)) {
+        overlaps.push({ match: normalized[i].raw, overlaps_with: normalized[j].raw });
+      }
+    }
+  }
+  const incompleteMappings = mappings
+    .filter((mapping) => !mapping.type || !mapping.category)
+    .map((mapping) => ({ match: mapping.match, type: mapping.type ?? null, category: mapping.category ?? null }));
+  return {
+    mapping_count: mappings.length,
+    duplicate_match_count: duplicateMatches.length,
+    overlap_count: overlaps.length,
+    incomplete_mapping_count: incompleteMappings.length,
+    duplicate_matches: duplicateMatches,
+    overlapping_matches: overlaps.slice(0, 20),
+    incomplete_mappings: incompleteMappings.slice(0, 20),
+  };
+}
 
 function readEventsFile(path: string): LedgerEvent[] {
   if (!existsSync(path)) {
@@ -170,6 +468,25 @@ function statementProfileTemplate(): string {
   }, null, 2) + "\n";
 }
 
+function vendorMappingsTemplate(): string {
+  return JSON.stringify({
+    mappings: [
+      {
+        match: "APPLE.COM/BILL",
+        type: "expense",
+        category: "software_and_digital_services",
+        confidence: "inferred",
+      },
+      {
+        match: "PAYROLL",
+        type: "income",
+        category: "service_revenue",
+        confidence: "inferred",
+      },
+    ],
+  }, null, 2) + "\n";
+}
+
 function dateRange(events: LedgerEvent[], basis: DateBasis): { first: string | null; last: string | null } {
   const dated = events
     .map((event) => {
@@ -226,7 +543,8 @@ function scaffoldReadme(kind: ScaffoldKind): string {
     "2. Normalize rows into canonical events using either `mapper.mjs` or `mapper.py`.",
     "3. Preserve provenance and source-specific facts in `data`.",
     "4. Review the emitted JSONL before appending.",
-    "5. Use `clawbooks batch`, `clawbooks verify`, `clawbooks reconcile`, and `clawbooks review` after import.",
+    "5. Use `clawbooks import mappings suggest` or `clawbooks import mappings check` only if recurring description hints would help.",
+    "6. Use `clawbooks batch`, `clawbooks verify`, `clawbooks reconcile`, and `clawbooks review` after import.",
     "",
   ];
 
@@ -238,6 +556,7 @@ function scaffoldReadme(kind: ScaffoldKind): string {
       "- Record statement period, opening balance, and closing balance when available.",
       "- Handle newest-first exports explicitly before emitting events.",
       "- Check row count, debit total, and credit total against the source statement.",
+      "- If repeated vendors need stable classification hints, keep them in `vendor-mappings.json` and let the mapper consult that file.",
       "",
     ],
     "generic-csv": [
@@ -271,6 +590,8 @@ function scaffoldReadme(kind: ScaffoldKind): string {
 
 function scaffoldMapper(kind: ScaffoldKind): string {
   const sharedHelpers = `import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 function csvRows(path) {
   const text = readFileSync(path, "utf-8").trim();
@@ -298,6 +619,22 @@ function numberOrNull(value) {
   const n = Number(String(value).replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
 }
+
+function loadMappings() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(join(here, "vendor-mappings.json"), "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed.mappings) ? parsed.mappings : [];
+  } catch {
+    return [];
+  }
+}
+
+function applyMapping(description, mappings) {
+  const upper = String(description || "").toUpperCase();
+  return mappings.find((mapping) => upper.includes(String(mapping.match || "").toUpperCase())) || null;
+}
 `;
 
   const templates: Record<ScaffoldKind, string> = {
@@ -309,24 +646,32 @@ if (!inputPath) {
 }
 
 const rows = csvRows(inputPath);
+const mappings = loadMappings();
 const events = rows
   .slice()
   .reverse()
   .map((row) => {
-    const amount = numberOrNull(row.amount);
+    const debit = numberOrNull(row.debit);
+    const credit = numberOrNull(row.credit);
+    const balance = numberOrNull(row.balance);
+    const amount = (credit ?? 0) - (debit ?? 0);
     if (amount === null) return null;
+    if (amount === 0 && debit === null && credit === null) return null;
+    const description = row.description || row.memo || row.details || "";
+    const mapping = applyMapping(description, mappings);
     return {
       ts: isoDate(row.posting_date || row.transaction_date),
       source: "statement_import",
-      type: amount >= 0 ? "income" : "expense",
+      type: mapping?.type || (amount >= 0 ? "income" : "expense"),
       data: {
         amount,
         currency: row.currency || "USD",
-        description: row.description || row.memo || "",
-        category: "uncategorized",
-        confidence: "inferred",
+        description,
+        category: mapping?.category || "uncategorized",
+        confidence: mapping?.confidence || "inferred",
         transaction_date: row.transaction_date || null,
         posting_date: row.posting_date || null,
+        balance: balance ?? null,
         source_doc: inputPath,
         source_row: row.__row,
         provenance: {
@@ -458,6 +803,7 @@ function scaffoldPythonMapper(kind: ScaffoldKind): string {
   const sharedHelpers = `import csv
 import json
 import sys
+from pathlib import Path
 
 
 def csv_rows(path):
@@ -485,6 +831,24 @@ def number_or_none(value):
         return float(str(value).replace(",", ""))
     except ValueError:
         return None
+
+
+def load_mappings():
+    try:
+        path = Path(__file__).with_name("vendor-mappings.json")
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        mappings = parsed.get("mappings", [])
+        return mappings if isinstance(mappings, list) else []
+    except Exception:
+        return []
+
+
+def apply_mapping(description, mappings):
+    upper = str(description or "").upper()
+    for mapping in mappings:
+        if str(mapping.get("match", "")).upper() in upper:
+            return mapping
+    return None
 `;
 
   const templates: Record<ScaffoldKind, string> = {
@@ -496,23 +860,30 @@ if len(sys.argv) < 2:
 input_path = sys.argv[1]
 rows = list(reversed(csv_rows(input_path)))
 events = []
+mappings = load_mappings()
 
 for row in rows:
-    amount = number_or_none(row.get("amount"))
-    if amount is None:
+    debit = number_or_none(row.get("debit"))
+    credit = number_or_none(row.get("credit"))
+    balance = number_or_none(row.get("balance"))
+    amount = (credit or 0) - (debit or 0)
+    if amount == 0 and debit is None and credit is None:
         continue
+    description = row.get("description") or row.get("memo") or row.get("details") or ""
+    mapping = apply_mapping(description, mappings)
     events.append({
         "ts": iso_date(row.get("posting_date") or row.get("transaction_date")),
         "source": "statement_import",
-        "type": "income" if amount >= 0 else "expense",
+        "type": mapping.get("type") if mapping else ("income" if amount >= 0 else "expense"),
         "data": {
             "amount": amount,
             "currency": row.get("currency") or "USD",
-            "description": row.get("description") or row.get("memo") or "",
-            "category": "uncategorized",
-            "confidence": "inferred",
+            "description": description,
+            "category": mapping.get("category") if mapping else "uncategorized",
+            "confidence": mapping.get("confidence") if mapping else "inferred",
             "transaction_date": row.get("transaction_date") or None,
             "posting_date": row.get("posting_date") or None,
+            "balance": balance,
             "source_doc": input_path,
             "source_row": row.get("__row"),
             "provenance": {
@@ -636,10 +1007,98 @@ export function cmdImport(args: string[], params: ImportParams) {
   const f = flags(args);
   const p = positional(args);
 
+  if (p[0] === "mappings") {
+    const action = p[1];
+    if (!action || action === "--list" || action === "list" || f.list === "true") {
+      console.log(JSON.stringify({
+        command: "import mappings",
+        actions: [
+          { name: "suggest", description: "Suggest vendor mapping candidates from stable ledger history" },
+          { name: "check", description: "Validate a mappings file and optionally compare it to staged events" },
+        ],
+      }, null, 2));
+      return;
+    }
+    const mappingsPath = resolveVendorMappingsPath(f.mappings, undefined, p[2]);
+    const loadedMappings = readVendorMappings(mappingsPath);
+    const ledgerEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
+
+    if (action === "suggest") {
+      if (!existsSync(params.ledgerPath)) {
+        console.error("No ledger found for `import mappings suggest`. Run it inside a books directory or use clawbooks where/doctor first.");
+        process.exit(1);
+      }
+      const minOccurrences = Math.max(2, parseInt(f["min-occurrences"] ?? "3") || 3);
+      const sourceFilter = f.source;
+      const history = sourceFilter ? ledgerEvents.filter((event) => event.source === sourceFilter) : ledgerEvents;
+      const suggestions = suggestMappings(history, loadedMappings.mappings, minOccurrences);
+      const result = {
+        command: "import mappings suggest",
+        ledger_path: resolve(params.ledgerPath),
+        mappings_path: loadedMappings.path,
+        min_occurrences: minOccurrences,
+        source: sourceFilter ?? null,
+        existing_mapping_count: loadedMappings.mappings.length,
+        existing_mapping_issues: loadedMappings.issues,
+        candidate_summary: {
+          total_candidates: suggestions.total_candidates,
+          uncovered_candidates: suggestions.uncovered_candidates,
+        },
+        suggestions: suggestions.suggestions,
+        next_steps: [
+          "Review the suggested mappings before copying any of them into vendor-mappings.json.",
+          "Keep vendor mappings as factual recurring hints, not as a replacement for policy.md.",
+          "Re-run `clawbooks import check` after updating mappings to see coverage and conflict signals.",
+        ],
+      };
+      if (f.out) {
+        const outPath = resolve(f.out);
+        writeFileSync(outPath, JSON.stringify({
+          generated_at: new Date().toISOString(),
+          source: "clawbooks import mappings suggest",
+          ledger_path: resolve(params.ledgerPath),
+          mappings: suggestions.suggestions.filter((item) => !item.already_covered).map((item) => item.suggested_mapping),
+        }, null, 2) + "\n", "utf-8");
+      }
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    if (action === "check") {
+      const inputPath = p[2];
+      const events = inputPath ? readEventsFile(resolve(inputPath)) : [];
+      const mappingFileChecks = validateMappingsFile(loadedMappings.mappings);
+      const diagnostics = inputPath ? mappingDiagnostics(events, loadedMappings.mappings, ledgerEvents) : null;
+      const issues = [
+        ...loadedMappings.issues,
+        ...(mappingFileChecks.duplicate_match_count > 0 ? [`${mappingFileChecks.duplicate_match_count} duplicate normalized mapping match(es) detected.`] : []),
+        ...(mappingFileChecks.overlap_count > 0 ? [`${mappingFileChecks.overlap_count} overlapping mapping match(es) detected.`] : []),
+      ];
+      console.log(JSON.stringify({
+        command: "import mappings check",
+        mappings_path: loadedMappings.path,
+        input_path: inputPath ? resolve(inputPath) : null,
+        ledger_path: existsSync(params.ledgerPath) ? resolve(params.ledgerPath) : null,
+        status: issues.length === 0 ? "ok" : "warn",
+        issues,
+        file_checks: mappingFileChecks,
+        event_diagnostics: diagnostics,
+        next_steps: [
+          "Remove duplicate or overlapping match rules before relying on vendor mappings heavily.",
+          "Treat vendor mappings as operator-maintained hints and consistency checks, not as hidden accounting logic.",
+        ],
+      }, null, 2));
+      return;
+    }
+
+    console.error("Usage: clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
+    process.exit(1);
+  }
+
   if (p[0] === "check") {
     const inputPath = p[1];
     if (!inputPath) {
-      console.error("Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C]");
+      console.error("Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C] [--save-session] [--session-id ID]");
       process.exit(1);
     }
 
@@ -651,6 +1110,9 @@ export function cmdImport(args: string[], params: ImportParams) {
     }
 
     const rawEvents = readEventsFile(resolve(inputPath));
+    const mappingsPath = resolveVendorMappingsPath(f.mappings, f.statement, inputPath);
+    const loadedMappings = readVendorMappings(mappingsPath);
+    const ledgerHistoryEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
     let rawFilteredEvents = rawEvents;
     const currency = f.currency ?? profile.currency;
     if (currency) rawFilteredEvents = rawFilteredEvents.filter((event) => String(event.data.currency) === currency);
@@ -689,6 +1151,13 @@ export function cmdImport(args: string[], params: ImportParams) {
     const filteredOrdering = orderingProfile(rawFilteredEvents, dateBasis);
     const scopedOrdering = orderingProfile(rawFilteredByBasis.events, dateBasis);
     const duplicateRefList = duplicateRefs(scopedEvents);
+    const mappingsReport = {
+      available: loadedMappings.path !== null,
+      path: loadedMappings.path,
+      file_issues: loadedMappings.issues,
+      file_checks: validateMappingsFile(loadedMappings.mappings),
+      diagnostics: mappingDiagnostics(rawFilteredEvents, loadedMappings.mappings, ledgerHistoryEvents),
+    };
 
     if (f.count !== undefined || profile.count !== undefined) {
       expected.count = f.count !== undefined ? parseInt(f.count) : Number(profile.count);
@@ -754,6 +1223,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       event_types: eventCountsByType(scopedEvents),
       provenance_coverage: provenance,
       date_coverage: dates,
+      mapping_diagnostics: mappingsReport,
       ordering: {
         filtered: filteredOrdering,
         scoped: scopedOrdering,
@@ -769,10 +1239,47 @@ export function cmdImport(args: string[], params: ImportParams) {
           "Re-run `clawbooks import check` until the staged file matches the statement expectations.",
         ],
     }, null, 2));
+
+    if (f["save-session"] === "true") {
+      const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      const sessionsDir = params.booksDir && existsSync(params.booksDir)
+        ? resolve(params.booksDir, "imports", "sessions")
+        : resolve("clawbooks-import-sessions");
+      mkdirSync(sessionsDir, { recursive: true });
+      const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
+      const sessionRecord = {
+        import_session: sessionId,
+        created_at: new Date().toISOString(),
+        recorded_via: "clawbooks import check",
+        input_path: resolve(inputPath),
+        statement_profile_path: f.statement ? resolve(f.statement) : null,
+        status: issues.length === 0 ? "ok" : "mismatch",
+        date_basis: dateBasis,
+        currency: currency ?? null,
+        expected,
+        actual,
+        differences,
+        issue_count: issues.length,
+        issues,
+        input_event_count: rawEvents.length,
+        filtered_event_count: events.length,
+        scoped_event_count: scopedEvents.length,
+        provenance_coverage: provenance,
+        date_coverage: dates,
+        mapping_diagnostics: mappingsReport,
+        ordering: {
+          filtered: filteredOrdering,
+          scoped: scopedOrdering,
+        },
+        duplicate_refs: duplicateRefList,
+      };
+      writeFileSync(sessionPath, JSON.stringify(sessionRecord, null, 2) + "\n", "utf-8");
+      console.error(`Saved import session: ${sessionPath}`);
+    }
     return;
   }
 
-  if (f["list-scaffolds"] === "true" || f.list === "true" || (p[0] === "scaffold" && p.length === 1)) {
+  if (f["list-scaffolds"] === "true" || f.list === "true") {
     console.log(JSON.stringify({
       command: "import scaffold",
       scaffolds: [
@@ -786,7 +1293,7 @@ export function cmdImport(args: string[], params: ImportParams) {
   }
 
   if (p[0] !== "scaffold") {
-    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]");
+    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]\n       clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
     process.exit(1);
   }
 
@@ -804,6 +1311,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     { path: join(outDir, "mapper.mjs"), content: scaffoldMapper(kind) },
     { path: join(outDir, "mapper.py"), content: scaffoldPythonMapper(kind) },
     ...(kind === "statement-csv" ? [{ path: join(outDir, "statement-profile.json"), content: statementProfileTemplate() }] : []),
+    ...(kind === "statement-csv" ? [{ path: join(outDir, "vendor-mappings.json"), content: vendorMappingsTemplate() }] : []),
   ];
 
   const fileResults = files.map((file) => {
@@ -821,6 +1329,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       "Edit mapper.mjs to match the source columns and event types.",
       "Or edit mapper.py if Python is the better fit for the import task.",
       "Run the mapper and review its JSONL output before appending.",
+      "Use `clawbooks import mappings suggest` later if you want factual recurring vendor hints from ledger history.",
       "Append with `clawbooks batch`, then run `clawbooks verify`, `clawbooks reconcile`, and `clawbooks review`.",
     ],
   }, null, 2));

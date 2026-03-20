@@ -37,6 +37,8 @@ export function cmdDoctor(params: {
   const duplicateGroups = verification?.potential_duplicates?.length ?? 0;
   const chainValid = verification?.chain_valid ?? null;
   const issueCount = verification?.issues.length ?? 0;
+  const importSessionsDir = params.booksDir ? resolve(params.booksDir, "imports", "sessions") : null;
+  const importsDir = params.booksDir ? resolve(params.booksDir, "imports") : null;
 
   let snapshotStatus = "none";
   let snapshotReason = "No snapshot events found in the ledger.";
@@ -148,6 +150,15 @@ export function cmdDoctor(params: {
       operator_mistakes: {
         warning_count: operatorWarnings.length,
         warnings: operatorWarnings,
+      },
+      import_workflow: {
+        import_scaffolds_dir: importsDir,
+        import_sessions_dir: importSessionsDir,
+        recommendations: [
+          "Use `clawbooks import scaffold <kind>` when starting a new importer.",
+          "Use `clawbooks import check ... --statement ... --save-session` before appending staged statement imports.",
+          "Use `clawbooks import mappings suggest` or `clawbooks import mappings check` only as optional factual consistency aids.",
+        ],
       },
     },
     suggested_next_command: "clawbooks quickstart",

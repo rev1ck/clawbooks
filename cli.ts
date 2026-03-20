@@ -87,6 +87,8 @@ Setup:
                                       Emit editable import mapper templates (mjs + python)
   import      check <events.jsonl> [flags]
                                       Validate a staged import file before append
+  import      mappings <action> [flags]
+                                      Surface or validate optional vendor mapping hints
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
@@ -97,6 +99,7 @@ Import:
   batch                       Append JSONL events from stdin
   import scaffold --list      List available import scaffolds
   import check staged.jsonl   Check a staged JSONL import against explicit expectations
+  import mappings suggest     Suggest recurring vendor hints from ledger history
 
 Inspect:
   log     [flags]             Print ledger events
@@ -135,8 +138,11 @@ Quick examples:
   clawbooks version
   clawbooks version --latest
   clawbooks init
+  clawbooks import scaffold --list
   clawbooks import scaffold statement-csv
-  clawbooks import check staged.jsonl --statement statement-profile.json
+  clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+  clawbooks import mappings suggest --source statement_import
+  clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
   clawbooks policy --path
   clawbooks policy lint
@@ -155,7 +161,7 @@ Recommended first session:
   clawbooks init
   clawbooks quickstart
   clawbooks import scaffold statement-csv
-  clawbooks import check staged.jsonl --statement statement-profile.json
+  clawbooks import check staged.jsonl --statement statement-profile.json --save-session
 
 Setup flags:
   --books <dir>               Use a specific books directory
@@ -197,6 +203,12 @@ Review flags:
 Import check notes:
   --statement <file>          Load a statement-profile JSON with explicit expectations
                               such as period, balances, row count, and date basis
+  --save-session              Save a sidecar import session JSON for operator traceability
+  --mappings <file>           Use an explicit vendor-mappings.json file for factual consistency checks
+
+Vendor mapping notes:
+  Vendor mappings are optional operator-maintained hints for recurring descriptions.
+  They do not override policy.md and are never applied silently by the CLI.
 
 Policy lint notes:
   policy lint emits severity-tagged checks and workflow coverage signals.
@@ -217,12 +229,143 @@ Environment:
   CLAWBOOKS_POLICY    Override policy path (takes priority over books dir)
 `;
 
+function commandHelp(cmd?: string, args: string[] = []): string | null {
+  const sub = args[0];
+  const key = cmd === "import" && sub === "check" ? "import-check"
+    : cmd === "import" && sub === "scaffold" ? "import-scaffold"
+    : cmd === "import" && sub === "mappings" ? "import-mappings"
+    : cmd === "review" && sub === "batch" ? "review-batch"
+    : cmd ?? "";
+
+  const helps: Record<string, string> = {
+    init: `Usage: clawbooks init [--books DIR] [--example NAME] [--list-examples]
+
+Create a books directory with ledger.jsonl, policy.md, and program.md.
+
+Examples:
+  clawbooks init
+  clawbooks init --books .books-personal
+  clawbooks init --example simple`,
+    "import-scaffold": `Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]
+
+Emit editable mapper templates. For statement-csv, clawbooks also emits:
+  - statement-profile.json
+  - vendor-mappings.json
+
+Examples:
+  clawbooks import scaffold statement-csv
+  clawbooks import scaffold generic-csv --out ./imports/generic`,
+    "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID]
+
+Validate staged JSONL before append. --statement loads explicit expectations such as:
+  - period coverage
+  - opening/closing balance
+  - row count
+  - date basis
+
+If a vendor mappings file is present, import check surfaces coverage and consistency signals.
+
+Examples:
+  clawbooks import check staged.jsonl --statement statement-profile.json
+  clawbooks import check staged.jsonl --statement statement-profile.json --save-session`,
+    "import-mappings": `Usage: clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]
+
+Work with optional vendor-mappings.json files as factual recurring-description hints.
+
+Examples:
+  clawbooks import mappings suggest --source statement_import
+  clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json`,
+    review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type]
+
+Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.
+
+Examples:
+  clawbooks review 2026-03
+  clawbooks review 2026-03 --confidence inferred,unclear --group-by category`,
+    "review-batch": `Usage: clawbooks review batch [period] --out PATH --action confirm|reclassify [flags]
+
+Generate append-only JSONL review actions for the visible queue. Inspect the file before appending with clawbooks batch.
+
+Examples:
+  clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
+  clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software`,
+    summary: `Usage: clawbooks summary [period] [flags]
+
+Produce report aggregates, report sections, settlement summaries, and review materiality.
+
+Examples:
+  clawbooks summary 2026-03
+  clawbooks summary 2026-01/2026-06-30`,
+    policy: `Usage: clawbooks policy [lint] [--path] [--list-examples] [--example NAME]
+
+Print the current policy, lint it, or inspect bundled starter examples.
+
+Examples:
+  clawbooks policy
+  clawbooks policy lint
+  clawbooks policy --example simple`,
+    reconcile: `Usage: clawbooks reconcile [period] --source S [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting]
+
+Compare imported totals to explicit expectations.
+
+Examples:
+  clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --credits 14500
+  clawbooks reconcile 2026-03 --source bank --opening-balance 45000 --closing-balance 46250 --date-basis posting`,
+    verify: `Usage: clawbooks verify [period] [--balance N] [--opening-balance N] [--currency C]
+
+Run integrity, duplicate, sign, and balance checks on the ledger.
+
+Examples:
+  clawbooks verify 2026-03
+  clawbooks verify 2026-03 --balance 900 --opening-balance 1000 --currency USD`,
+    quickstart: `Usage: clawbooks quickstart
+
+Explain the operating model, resolved core files, and recommended first-run workflow.
+
+Example:
+  clawbooks quickstart`,
+    doctor: `Usage: clawbooks doctor
+
+Show setup diagnostics, policy readiness, and operator warnings.
+
+Example:
+  clawbooks doctor`,
+    context: `Usage: clawbooks context [period] [--include-policy] [--verbose]
+
+Print policy-aware context for reasoning and reporting.
+
+Examples:
+  clawbooks context 2026-03
+  clawbooks context 2026-03 --include-policy`,
+    documents: `Usage: clawbooks documents [period] [--as-of ISO_DATE]
+
+Show neutral settlement, aging, and document status views.
+
+Example:
+  clawbooks documents 2026-03 --as-of 2026-03-31T00:00:00.000Z`,
+    pack: `Usage: clawbooks pack [period] [--out DIR]
+
+Generate an audit pack with CSVs, JSON, and the applied policy.
+
+Example:
+  clawbooks pack 2026-03 --out ./march-pack`,
+  };
+
+  return helps[key] ?? null;
+}
+
 // --- Dispatch ---
 
 const WRITE_COMMANDS = new Set(["record", "batch", "init", "snapshot", "compact"]);
 const READ_COMMANDS = new Set(["log", "context", "documents", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack"]);
 
 const [cmd, ...args] = argv;
+
+if (args.includes("--help") || args.includes("-h")) {
+  const help = commandHelp(cmd, args.filter((arg) => arg !== "--help" && arg !== "-h"));
+  console.log(help ?? HELP);
+  process.exit(0);
+}
 
 // For write commands (except init), auto-create .books/ if needed
 if (WRITE_COMMANDS.has(cmd) && cmd !== "init") {
@@ -240,7 +383,7 @@ switch (cmd) {
   case "init":      cmdInit(args, { booksFlag }); break;
   case "record":    cmdRecord(args, LEDGER); break;
   case "batch":     cmdBatch(await stdin(), LEDGER); break;
-  case "import":    cmdImport(args, { booksDir: BOOKS_DIR }); break;
+  case "import":    cmdImport(args, { booksDir: BOOKS_DIR, ledgerPath: LEDGER }); break;
   case "log":       cmdLog(args, LEDGER); break;
   case "context":   cmdContext(args, {
     ledgerPath: LEDGER,

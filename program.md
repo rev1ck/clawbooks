@@ -180,10 +180,12 @@ When the user gives you a CSV or other raw financial data:
 6. Separate operating activity from taxes, owner distributions, internal transfers, and capital items while importing
 7. For hardware/equipment purchases that meet the capitalization threshold, set `data.capitalize: true` and optionally `data.useful_life_months`
 8. If useful, generate a starter mapper with `clawbooks import scaffold <kind>` and adapt either `mapper.mjs` or `mapper.py` to the source
-9. Output as JSONL and run `clawbooks import check <events.jsonl>` with explicit statement expectations before append
-10. Pipe the checked file to `clawbooks batch`
-11. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
-10. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
+9. If recurring descriptions matter, keep optional factual hints in `vendor-mappings.json`; do not treat them as policy or hidden rules
+10. Output as JSONL and run `clawbooks import check <events.jsonl>` with explicit statement expectations before append
+11. Use `clawbooks import check ... --save-session` if you want a sidecar record of the validation run
+12. Pipe the checked file to `clawbooks batch`
+13. Run `clawbooks reconcile <period> --source <source> --count <rows> --debits <debits> --credits <credits>` to compare imported totals to the source extract
+14. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
 
 You are the parser. There is no import tool. You read the data and write the events.
 
@@ -194,6 +196,19 @@ When in doubt:
 - store references and hashes, not bulky source documents, in the ledger
 
 This workflow applies to statement-like sources generally: bank statements, card exports, processor settlements, exchange cash reports, and other row-based account activity exports.
+
+If you want help maintaining recurring description hints:
+
+- `clawbooks import mappings suggest` surfaces stable historical classification candidates from the ledger
+- `clawbooks import mappings check` validates a mappings file and compares it to staged imports
+- these commands are advisory only and do not update `policy.md`
+
+Import scaffold kinds:
+
+- `statement-csv`: bounded statements with opening/closing balance semantics
+- `generic-csv`: general transaction exports without statement semantics
+- `fills-csv`: broker or exchange fills/trade history exports
+- `manual-batch`: small hand-authored JSONL batches with explicit provenance
 
 ## Capitalizing assets
 
@@ -273,6 +288,8 @@ When importing events, set a `confidence` field in each event's data:
 
 After import, run `clawbooks review <period> --source S` to see items needing review.
 
+`review` shows a materiality-first queue and includes a `reason_in_queue` explanation per returned item.
+
 To reclassify an event, record an append-only correction:
 ```bash
 clawbooks record '{"source":"manual","type":"reclassify","data":{"original_id":"abc123","new_category":"contractor"}}'
@@ -290,6 +307,13 @@ To mark an event as reviewed and confirmed:
 
 ```bash
 clawbooks record '{"source":"manual","type":"confirm","data":{"original_id":"abc123","confidence":"clear","confirmed_by":"claude-code","notes":"matched to receipt"}}'
+```
+
+For bulk confirm/reclassify passes, generate an append-only action file first:
+
+```bash
+clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
+clawbooks batch < review-actions.jsonl
 ```
 
 ## Generating snapshots
@@ -356,8 +380,10 @@ Clawbooks stores its data in a `.books/` directory:
 ```bash
 clawbooks init                         # creates .books/ in CWD
 clawbooks quickstart                   # bootstrap the workflow and resolved files
+clawbooks import scaffold --list
 clawbooks import scaffold statement-csv
-clawbooks import check staged.jsonl --statement statement-profile.json
+clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import mappings suggest --source statement_import
 clawbooks init --list-examples         # show bundled policy examples
 clawbooks init --books .books-personal # creates named books dir
 clawbooks init --example simple        # use the cash-basis example
@@ -378,7 +404,10 @@ Recommended first-session flow:
 1. `clawbooks init`
 2. `clawbooks quickstart`
 3. `clawbooks import scaffold statement-csv`
-4. `clawbooks import check staged.jsonl --statement statement-profile.json`
+4. `clawbooks import check staged.jsonl --statement statement-profile.json --save-session`
+
+For a full worked example, see `docs/statement-import-example.md`.
+For staged import validation session records, inspect `.books/imports/sessions/` in the current books directory.
 
 ### Resolution order
 
