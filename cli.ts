@@ -151,6 +151,12 @@ Outcome surface:
   Use clawbooks to build P&L, balance sheet, cash flow, receivable/payable views,
   tax cuts, asset registers, reconciliations, audit packs, and custom period analysis.
 
+Recommended first session:
+  clawbooks init
+  clawbooks quickstart
+  clawbooks import scaffold statement-csv
+  clawbooks import check staged.jsonl --statement statement-profile.json
+
 Setup flags:
   --books <dir>               Use a specific books directory
 
@@ -187,6 +193,14 @@ Review flags:
   --confirmed-by <NAME>       Confirmer label for bulk confirm files
   --notes <TEXT>              Notes for bulk confirm files
   --new-category <CAT>        Target category for bulk reclassify files
+
+Import check notes:
+  --statement <file>          Load a statement-profile JSON with explicit expectations
+                              such as period, balances, row count, and date basis
+
+Policy lint notes:
+  policy lint emits severity-tagged checks and workflow coverage signals.
+  It is advisory and heuristic, not a policy parser or rules engine.
 
 Verify flags:
   --balance  <N>              Cross-check net balance against expected value

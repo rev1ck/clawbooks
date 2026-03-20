@@ -97,6 +97,8 @@ npm install -g clawbooks
 clawbooks --help
 ```
 
+Current version target: `0.2.0`
+
 Bootstrap:
 
 ```bash
@@ -207,6 +209,15 @@ clawbooks documents 2026-03
 
 `policy lint` is heuristic and advisory. It reports severity-tagged checks, starter-vs-custom readiness signals, and workflow-aware guidance for statements, documents, review/materiality, and trading-heavy policies.
 
+If you are starting from scratch, the fastest path is usually:
+
+```bash
+clawbooks init
+clawbooks quickstart
+clawbooks import scaffold statement-csv
+clawbooks import check staged.jsonl --statement statement-profile.json
+```
+
 Analyze and report:
 
 ```bash
@@ -217,6 +228,7 @@ clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD
 clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --opening-balance 45000 --closing-balance 46250 --date-basis posting --gaps
 clawbooks review 2026-03 --source bank --confidence inferred,unclear --min-magnitude 100 --group-by category
 clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
+clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software
 clawbooks assets --as-of 2026-03-31
 clawbooks pack 2026-03 --out ./march-pack
 ```
@@ -228,6 +240,23 @@ clawbooks snapshot 2026-03
 clawbooks snapshot 2026-03 --save
 clawbooks compact 2025-12
 ```
+
+## Testing And Release Checks
+
+For local validation:
+
+```bash
+npm test
+npm run test:e2e
+npm run test:release
+```
+
+`npm run test:e2e` exercises the end-to-end operator flow twice:
+
+- once against the built local CLI
+- once against the packed npm tarball installed into a clean temp directory
+
+That makes it a useful pre-release check for packaging, bundled docs, and the real import/review/report workflow.
 
 ## What Snapshot Means
 

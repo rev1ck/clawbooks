@@ -355,6 +355,7 @@ Clawbooks stores its data in a `.books/` directory:
 
 ```bash
 clawbooks init                         # creates .books/ in CWD
+clawbooks quickstart                   # bootstrap the workflow and resolved files
 clawbooks import scaffold statement-csv
 clawbooks import check staged.jsonl --statement statement-profile.json
 clawbooks init --list-examples         # show bundled policy examples
@@ -372,6 +373,12 @@ Examples:
 - `default`: general-purpose starter policy
 - `simple`: cash-basis operating business
 - `complex`: accrual/trading-heavy example
+
+Recommended first-session flow:
+1. `clawbooks init`
+2. `clawbooks quickstart`
+3. `clawbooks import scaffold statement-csv`
+4. `clawbooks import check staged.jsonl --statement statement-profile.json`
 
 ### Resolution order
 
@@ -435,6 +442,22 @@ When starting a new agent session, run `clawbooks quickstart` first. It is the b
 
 Run `clawbooks doctor` when you want a more mechanical view of path resolution, support-file availability, and policy readiness.
 
+### Release validation
+
+Before cutting a release:
+
+```bash
+npm test
+npm run test:e2e
+npm run test:release
+```
+
+`test:e2e` runs the operator workflow end to end against both:
+- the built local CLI
+- a clean install of the packed npm tarball
+
+Use this to catch packaging or bundled-file regressions that unit/regression tests can miss.
+
 ### For coding agents
 
 When using clawbooks from a generic coding agent session:
@@ -491,6 +514,7 @@ clawbooks context [period]          # load policy + events for reasoning
 clawbooks documents [period]        # neutral settlement and aging view
 clawbooks policy                    # print policy.md
 clawbooks policy lint               # advisory policy completeness / contradiction check
+                                     # includes severity-tagged checks and workflow coverage
 clawbooks stats                     # ledger overview
 clawbooks verify [period]           # integrity + chain + balance check + duplicates
 clawbooks verify --balance N        # cross-check closing balance against period movement
@@ -502,6 +526,7 @@ clawbooks reconcile -S --date-basis posting --opening-balance 100 --closing-bala
 clawbooks review [period]           # show items needing classification review
 clawbooks review [period] --confidence inferred,unclear --min-magnitude 100 --group-by category
 clawbooks review batch [period] --out review-actions.jsonl --action confirm
+clawbooks review batch [period] --out reclassify.jsonl --action reclassify --new-category software
 clawbooks summary [period]          # aggregates + movement summary + report sections
                                      # plus neutral settlement / candidate summaries
 clawbooks snapshot [period] [--save] # compute period snapshot (balances, movement summary, sections)
