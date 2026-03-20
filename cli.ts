@@ -137,6 +137,7 @@ Quick examples:
   clawbooks import scaffold statement-csv
   clawbooks import check staged.jsonl --count 50 --debits -12000 --credits 14500 --opening-balance 45000 --closing-balance 47500 --date-basis posting
   clawbooks policy --path
+  clawbooks policy lint
   clawbooks policy --list-examples
   clawbooks policy --example simple
   clawbooks summary 2026-03

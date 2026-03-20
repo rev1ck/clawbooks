@@ -1,5 +1,38 @@
 import { existsSync, readFileSync } from "node:fs";
 
+type LintSeverity = "error" | "warn" | "info";
+
+type LintCheck = {
+  severity: LintSeverity;
+  code: string;
+  message: string;
+};
+
+function pushCheck(
+  checks: LintCheck[],
+  bucket: string[],
+  check: LintCheck,
+) {
+  if (checks.some((existing) => existing.code === check.code && existing.message === check.message)) return;
+  checks.push(check);
+  if (!bucket.includes(check.message)) bucket.push(check.message);
+}
+
+function extractYamlHints(text: string): string | null {
+  const match = text.match(/```yaml\s*([\s\S]*?)```/m);
+  return match?.[1] ?? null;
+}
+
+function extractHintValue(yaml: string | null, key: string): string | null {
+  if (!yaml) return null;
+  const match = yaml.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, "m"));
+  return match?.[1]?.trim() ?? null;
+}
+
+function hasHeading(text: string, heading: string): boolean {
+  return new RegExp(`^## ${heading}$`, "m").test(text);
+}
+
 export function policyText(policyPath: string): string {
   if (!existsSync(policyPath)) return "No policy.md found.";
   return readFileSync(policyPath, "utf-8");
@@ -8,45 +41,194 @@ export function policyText(policyPath: string): string {
 export function lintPolicyText(text: string, policyPath: string) {
   const issues: string[] = [];
   const suggestions: string[] = [];
+  const checks: LintCheck[] = [];
+  const yamlHints = extractYamlHints(text);
+  const basis = extractHintValue(yamlHints, "basis");
+  const hasRevenueRecognition = hasHeading(text, "Revenue recognition");
+  const hasExpenseRecognition = hasHeading(text, "Expense recognition");
+  const hasArAp = hasHeading(text, "Accounts receivable / payable");
+  const hasReconciliation = hasHeading(text, "Reconciliation");
+  const hasDataConventions = hasHeading(text, "Data conventions");
+  const hasReportingViews = hasHeading(text, "Reporting views");
+  const hasStatementConventions = hasHeading(text, "Statement conventions");
+  const workflows = {
+    statements: /(statement|posting date|transaction date|closing balance|opening balance)/i.test(text),
+    documents: /(invoice|bill|accounts receivable|accounts payable|accrual)/i.test(text),
+    trading: /crypto|cost basis|lot|trade|fills/i.test(text),
+    managementViews: /(management|tax|reporting view|alternate interpretation)/i.test(text),
+    review: /confidence|materiality|review/i.test(text),
+  };
 
   if (!existsSync(policyPath)) {
-    issues.push("No policy file found.");
+    pushCheck(checks, issues, {
+      severity: "error",
+      code: "missing_policy",
+      message: "No policy file found.",
+    });
   } else {
-    if (!text.includes("```yaml")) issues.push("Missing structured YAML hints block.");
-    if (!/reporting:\s*\n[\s\S]*basis:/m.test(text)) issues.push("Missing reporting.basis hint.");
-    if (!/reporting:\s*\n[\s\S]*base_currency:/m.test(text)) issues.push("Missing reporting.base_currency hint.");
-    if (!/entity:/m.test(text)) issues.push("Missing entity section in structured hints.");
-    if (!/^## Entity$/m.test(text)) suggestions.push("Add a narrative '## Entity' section.");
-    if (!/^## Revenue recognition$/m.test(text)) suggestions.push("Add a '## Revenue recognition' section.");
-    if (!/^## Accounts receivable \/ payable$/m.test(text)) suggestions.push("Add an '## Accounts receivable / payable' section if documents are used.");
-    if (!/^## Reconciliation$/m.test(text)) suggestions.push("Add a '## Reconciliation' section with import checks.");
-    if (!/^## Data conventions$/m.test(text)) suggestions.push("Add a '## Data conventions' section for lots, FX, provenance, and agent identity.");
-    if (/(management|tax|reporting view|alternate interpretation)/i.test(text) && !/^## Reporting views$/m.test(text)) {
-      suggestions.push("If you maintain alternate interpretations such as management or tax views, add a short '## Reporting views' section.");
+    if (!text.includes("```yaml")) {
+      pushCheck(checks, issues, {
+        severity: "error",
+        code: "missing_yaml_hints",
+        message: "Missing structured YAML hints block.",
+      });
     }
-    if (/(statement|posting date|transaction date|closing balance|opening balance)/i.test(text) && !/^## Statement conventions$/m.test(text)) {
-      suggestions.push("If statements drive imports or reconciliations, add a concise '## Statement conventions' section for date basis and balance checks.");
+    if (!/reporting:\s*\n[\s\S]*basis:/m.test(text)) {
+      pushCheck(checks, issues, {
+        severity: "error",
+        code: "missing_reporting_basis",
+        message: "Missing reporting.basis hint.",
+      });
     }
-    const mentionsCrypto = /crypto|cost basis|lot/i.test(text);
-    if (mentionsCrypto && !/lot_id|lot_ref|disposition_lots/i.test(text)) {
-      suggestions.push("Crypto/trading policy should define lot-tracking conventions such as data.lot_id or data.lot_ref.");
+    if (!/reporting:\s*\n[\s\S]*base_currency:/m.test(text)) {
+      pushCheck(checks, issues, {
+        severity: "error",
+        code: "missing_base_currency",
+        message: "Missing reporting.base_currency hint.",
+      });
     }
-    if (mentionsCrypto && !/fx_rate|price_usd|valuation_ts|price_source/i.test(text)) {
-      suggestions.push("Crypto/trading policy should define FX or valuation fields such as data.fx_rate or data.price_usd.");
+    if (!/entity:/m.test(text)) {
+      pushCheck(checks, issues, {
+        severity: "error",
+        code: "missing_entity_hints",
+        message: "Missing entity section in structured hints.",
+      });
+    }
+    if (!hasHeading(text, "Entity")) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_entity_section",
+        message: "Add a narrative '## Entity' section.",
+      });
+    }
+    if (!hasRevenueRecognition) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_revenue_recognition",
+        message: "Add a '## Revenue recognition' section.",
+      });
+    }
+    if (!hasExpenseRecognition) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_expense_recognition",
+        message: "Add an '## Expense recognition' section.",
+      });
+    }
+    if (!hasArAp) {
+      pushCheck(checks, suggestions, {
+        severity: workflows.documents || basis === "accrual" ? "warn" : "info",
+        code: "missing_ar_ap",
+        message: "Add an '## Accounts receivable / payable' section if documents are used.",
+      });
+    }
+    if (!hasReconciliation) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_reconciliation",
+        message: "Add a '## Reconciliation' section with import checks.",
+      });
+    }
+    if (!hasDataConventions) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_data_conventions",
+        message: "Add a '## Data conventions' section for lots, FX, provenance, and agent identity.",
+      });
+    }
+    if (workflows.managementViews && !hasReportingViews) {
+      pushCheck(checks, suggestions, {
+        severity: "warn",
+        code: "missing_reporting_views",
+        message: "If you maintain alternate interpretations such as management or tax views, add a short '## Reporting views' section.",
+      });
+    }
+    if (workflows.statements && !hasStatementConventions) {
+      pushCheck(checks, suggestions, {
+        severity: "warn",
+        code: "missing_statement_conventions",
+        message: "If statements drive imports or reconciliations, add a concise '## Statement conventions' section for date basis and balance checks.",
+      });
+    }
+    if (workflows.trading && !/lot_id|lot_ref|disposition_lots/i.test(text)) {
+      pushCheck(checks, suggestions, {
+        severity: "warn",
+        code: "missing_lot_conventions",
+        message: "Crypto/trading policy should define lot-tracking conventions such as data.lot_id or data.lot_ref.",
+      });
+    }
+    if (workflows.trading && !/fx_rate|price_usd|valuation_ts|price_source/i.test(text)) {
+      pushCheck(checks, suggestions, {
+        severity: "warn",
+        code: "missing_fx_conventions",
+        message: "Crypto/trading policy should define FX or valuation fields such as data.fx_rate or data.price_usd.",
+      });
     }
     if (!/source_doc|provenance|source_row|source_hash/i.test(text)) {
-      suggestions.push("Define provenance conventions such as data.source_doc, data.source_row, or data.provenance.");
+      pushCheck(checks, suggestions, {
+        severity: "warn",
+        code: "missing_source_provenance",
+        message: "Define provenance conventions such as data.source_doc, data.source_row, or data.provenance.",
+      });
     }
     if (!/recorded_by|recorded_via|import_session/i.test(text)) {
-      suggestions.push("Define write provenance conventions such as data.recorded_by or data.import_session.");
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_write_provenance",
+        message: "Define write provenance conventions such as data.recorded_by or data.import_session.",
+      });
+    }
+
+    if (basis === "cash" && /invoice|bill|accounts receivable|accounts payable/i.test(text) && !/informational|tracking only|do not recognize/i.test(text)) {
+      pushCheck(checks, issues, {
+        severity: "warn",
+        code: "cash_basis_document_ambiguity",
+        message: "Policy says cash basis but also discusses invoices/bills without clarifying whether they are informational only or recognition-driving.",
+      });
+    }
+    if (basis === "accrual" && (!hasRevenueRecognition || !hasExpenseRecognition)) {
+      pushCheck(checks, issues, {
+        severity: "warn",
+        code: "accrual_basis_missing_recognition_sections",
+        message: "Policy says accrual basis but does not clearly define both revenue and expense recognition.",
+      });
+    }
+    if (workflows.review && !/materiality|threshold/i.test(text)) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_review_materiality",
+        message: "If review confidence matters operationally, add a short note on materiality thresholds or escalation rules.",
+      });
     }
   }
 
+  const severityCounts = checks.reduce((acc, check) => {
+    acc[check.severity]++;
+    return acc;
+  }, { error: 0, warn: 0, info: 0 });
+
   return {
-    status: issues.length === 0 && suggestions.length === 0 ? "ok" : "warn",
+    status: severityCounts.error === 0 && severityCounts.warn === 0 && suggestions.length === 0 ? "ok" : "warn",
     policy_path: policyPath,
     issues,
     suggestions,
+    checks,
+    severity_counts: severityCounts,
+    coverage: {
+      structured_hints: Boolean(yamlHints),
+      basis: basis ?? null,
+      sections: {
+        entity: hasHeading(text, "Entity"),
+        revenue_recognition: hasRevenueRecognition,
+        expense_recognition: hasExpenseRecognition,
+        accounts_receivable_payable: hasArAp,
+        reconciliation: hasReconciliation,
+        data_conventions: hasDataConventions,
+        reporting_views: hasReportingViews,
+        statement_conventions: hasStatementConventions,
+      },
+      workflows,
+    },
   } as const;
 }
 

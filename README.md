@@ -205,6 +205,8 @@ clawbooks policy lint
 clawbooks documents 2026-03
 ```
 
+`policy lint` is heuristic and advisory. It reports severity-tagged checks, starter-vs-custom readiness signals, and workflow-aware guidance for statements, documents, review/materiality, and trading-heavy policies.
+
 Analyze and report:
 
 ```bash

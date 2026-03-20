@@ -490,7 +490,7 @@ clawbooks log [--last N]            # view recent events
 clawbooks context [period]          # load policy + events for reasoning
 clawbooks documents [period]        # neutral settlement and aging view
 clawbooks policy                    # print policy.md
-clawbooks policy lint               # advisory policy completeness check
+clawbooks policy lint               # advisory policy completeness / contradiction check
 clawbooks stats                     # ledger overview
 clawbooks verify [period]           # integrity + chain + balance check + duplicates
 clawbooks verify --balance N        # cross-check closing balance against period movement
