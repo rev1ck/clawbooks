@@ -236,6 +236,7 @@ grep -q '"status": "ok"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check shou
 grep -q '"closing_balance": 900' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should compute closing balance"; exit 1; }
 grep -q '"statement_profile"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report loaded statement profile"; exit 1; }
 grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report provenance coverage"; exit 1; }
+grep -q '"filtered_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report filtered event count"; exit 1; }
 
 cat > "$IMPORT_ROOT/staged-newest-first.jsonl" <<'EOF'
 {"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
@@ -247,6 +248,8 @@ EOF
 IMPORT_CHECK_NEWEST="$IMPORT_ROOT/import-check-newest.json"
 (cd "$IMPORT_ROOT" && $CLI import check staged-newest-first.jsonl --statement statement-profile-newest.json 2>&1) > "$IMPORT_CHECK_NEWEST"
 grep -q '"status": "ok"' "$IMPORT_CHECK_NEWEST" || { echo "FAIL: import check should accept correctly newest-first staged files"; exit 1; }
+grep -q '"filtered"' "$IMPORT_CHECK_NEWEST" || { echo "FAIL: import check should report filtered ordering separately"; exit 1; }
+grep -q '"scoped"' "$IMPORT_CHECK_NEWEST" || { echo "FAIL: import check should report scoped ordering separately"; exit 1; }
 
 cat > "$IMPORT_ROOT/staged-out-of-period.jsonl" <<'EOF'
 {"ts":"2026-02-27T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":50,"currency":"USD","posting_date":"2026-02-27"}}
@@ -330,6 +333,47 @@ POLICY_LINT="$DOCS_ROOT/policy-lint.json"
 grep -q '"status": "warn"' "$POLICY_LINT" || { echo "FAIL: policy lint should warn on incomplete policy"; exit 1; }
 grep -q 'Revenue recognition' "$POLICY_LINT" || { echo "FAIL: policy lint should suggest missing sections"; exit 1; }
 
+POLICY_OK_ROOT="$(mktemp -d)"
+mkdir -p "$POLICY_OK_ROOT/.books"
+touch "$POLICY_OK_ROOT/.books/ledger.jsonl"
+cat > "$POLICY_OK_ROOT/.books/policy.md" <<'EOF'
+# Accounting policy
+
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Ready Policy LLC
+reporting:
+  basis: cash
+  base_currency: USD
+```
+
+## Entity
+
+Ready Policy LLC is a consulting business.
+
+## Revenue recognition
+
+Recognize revenue on cash receipt.
+
+## Expense recognition
+
+Recognize expenses on payment.
+
+## Reconciliation
+
+Use statement totals and balance checks on import.
+
+## Data conventions
+
+Preserve data.source_doc, data.source_row, and data.recorded_by where available.
+EOF
+POLICY_OK_JSON="$POLICY_OK_ROOT/policy-ok.json"
+(cd "$POLICY_OK_ROOT" && $CLI policy lint 2>&1) > "$POLICY_OK_JSON"
+grep -q '"status": "ok"' "$POLICY_OK_JSON" || { echo "FAIL: policy lint should allow info-only guidance without downgrading status"; exit 1; }
+rm -rf "$POLICY_OK_ROOT"
+
 DOCTOR_DOCS="$DOCS_ROOT/doctor.json"
 (cd "$DOCS_ROOT" && $CLI doctor 2>&1) > "$DOCTOR_DOCS"
 grep -q '"readiness": "starter"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report starter policy readiness"; exit 1; }
@@ -395,8 +439,13 @@ REVIEW_BATCH_JSON="$DOCS_ROOT/review-batch.json"
 (cd "$DOCS_ROOT" && $CLI review batch 2026-03 --out "$REVIEW_BATCH" --action confirm --confidence inferred 2>&1) > "$REVIEW_BATCH_JSON"
 test -f "$REVIEW_BATCH" || { echo "FAIL: review batch should write action file"; exit 1; }
 grep -q '"command": "review batch"' "$REVIEW_BATCH_JSON" || { echo "FAIL: review batch should identify itself"; exit 1; }
+grep -q '"status": "ok"' "$REVIEW_BATCH_JSON" || { echo "FAIL: review batch should report success status"; exit 1; }
 grep -q '"item_count": 1' "$REVIEW_BATCH_JSON" || { echo "FAIL: review batch should report generated item count"; exit 1; }
 grep -q '"type":"confirm"' "$REVIEW_BATCH" || { echo "FAIL: review batch should emit confirm events"; exit 1; }
+
+REVIEW_BATCH_EMPTY_JSON="$DOCS_ROOT/review-batch-empty.json"
+(cd "$DOCS_ROOT" && $CLI review batch 2026-03 --out "$DOCS_ROOT/unused.jsonl" --action confirm --confidence unclear --min-magnitude 1000 2>&1) > "$REVIEW_BATCH_EMPTY_JSON"
+grep -q '"status": "empty"' "$REVIEW_BATCH_EMPTY_JSON" || { echo "FAIL: review batch should report empty queues cleanly"; exit 1; }
 
 RECONCILE_DATE_BASIS="$DOCS_ROOT/reconcile-date-basis.json"
 (cd "$DOCS_ROOT" && $CLI reconcile 2026-03 --source bank --date-basis posting --count 4 --opening-balance 100 --closing-balance 115 2>&1) > "$RECONCILE_DATE_BASIS"

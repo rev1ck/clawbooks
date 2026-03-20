@@ -88,6 +88,21 @@ export function cmdReview(args: string[], ledgerPath: string) {
       process.exit(1);
     }
     const { items, filters } = visibleReviewItems(nestedArgs, ledgerPath);
+    if (items.length === 0) {
+      console.log(JSON.stringify({
+        command: "review batch",
+        status: "empty",
+        action,
+        out_path: outPath,
+        item_count: 0,
+        filters,
+        next_steps: [
+          "No matching review items were found for the requested filters.",
+          "Relax the filters or run `clawbooks review` first to inspect the queue.",
+        ],
+      }, null, 2));
+      return;
+    }
     const lines = items.map((event) => {
       if (action === "confirm") {
         return JSON.stringify({
@@ -114,9 +129,16 @@ export function cmdReview(args: string[], ledgerPath: string) {
         },
       });
     });
-    writeFileSync(outPath, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8");
+    try {
+      writeFileSync(outPath, lines.join("\n") + (lines.length ? "\n" : ""), "utf-8");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to write review batch file: ${message}`);
+      process.exit(1);
+    }
     console.log(JSON.stringify({
       command: "review batch",
+      status: "ok",
       action,
       out_path: outPath,
       item_count: items.length,

@@ -51,8 +51,9 @@ export function lintPolicyText(text: string, policyPath: string) {
   const hasDataConventions = hasHeading(text, "Data conventions");
   const hasReportingViews = hasHeading(text, "Reporting views");
   const hasStatementConventions = hasHeading(text, "Statement conventions");
+  const statementSemantics = /(posting date|transaction date|closing balance|opening balance|statement period|newest[- ]first|statement_start|statement_end)/i.test(text);
   const workflows = {
-    statements: /(statement|posting date|transaction date|closing balance|opening balance)/i.test(text),
+    statements: statementSemantics,
     documents: /(invoice|bill|accounts receivable|accounts payable|accrual)/i.test(text),
     trading: /crypto|cost basis|lot|trade|fills/i.test(text),
     managementViews: /(management|tax|reporting view|alternate interpretation)/i.test(text),
@@ -208,7 +209,7 @@ export function lintPolicyText(text: string, policyPath: string) {
   }, { error: 0, warn: 0, info: 0 });
 
   return {
-    status: severityCounts.error === 0 && severityCounts.warn === 0 && suggestions.length === 0 ? "ok" : "warn",
+    status: severityCounts.error === 0 && severityCounts.warn === 0 ? "ok" : "warn",
     policy_path: policyPath,
     issues,
     suggestions,

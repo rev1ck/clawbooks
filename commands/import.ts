@@ -651,15 +651,20 @@ export function cmdImport(args: string[], params: ImportParams) {
     }
 
     const rawEvents = readEventsFile(resolve(inputPath));
-    const allEvents = sortByTimestamp(rawEvents);
-    let events = allEvents;
+    let rawFilteredEvents = rawEvents;
     const currency = f.currency ?? profile.currency;
-    if (currency) events = events.filter((event) => String(event.data.currency) === currency);
-    if (profile.source) events = events.filter((event) => event.source === profile.source);
+    if (currency) rawFilteredEvents = rawFilteredEvents.filter((event) => String(event.data.currency) === currency);
+    if (profile.source) rawFilteredEvents = rawFilteredEvents.filter((event) => event.source === profile.source);
+    const events = sortByTimestamp(rawFilteredEvents);
 
     const statementStart = f["statement-start"] ?? profile.statement_start;
     const statementEnd = f["statement-end"] ?? profile.statement_end;
     const filteredByBasis = filterByDateBasis(events, {
+      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
+      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
+      basis: dateBasis,
+    });
+    const rawFilteredByBasis = filterByDateBasis(rawFilteredEvents, {
       after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
       before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
       basis: dateBasis,
@@ -681,7 +686,8 @@ export function cmdImport(args: string[], params: ImportParams) {
     const differences: Record<string, number> = {};
     const provenance = provenanceCoverage(scopedEvents);
     const dates = dateCoverage(scopedEvents);
-    const ordering = orderingProfile(rawEvents, dateBasis);
+    const filteredOrdering = orderingProfile(rawFilteredEvents, dateBasis);
+    const scopedOrdering = orderingProfile(rawFilteredByBasis.events, dateBasis);
     const duplicateRefList = duplicateRefs(scopedEvents);
 
     if (f.count !== undefined || profile.count !== undefined) {
@@ -722,11 +728,11 @@ export function cmdImport(args: string[], params: ImportParams) {
     if (outOfPeriodCount > 0) {
       issues.push(`${outOfPeriodCount} staged event(s) fall outside the requested statement period and were excluded from scoped checks.`);
     }
-    if (profile.newest_first === true && ordering.order !== "descending") {
-      issues.push(`Statement profile says newest_first=true, but the staged file appears ${ordering.order} by ${dateBasis} date.`);
+    if (profile.newest_first === true && filteredOrdering.order !== "descending") {
+      issues.push(`Statement profile says newest_first=true, but the staged file appears ${filteredOrdering.order} by ${dateBasis} date after source/currency filtering.`);
     }
-    if (profile.newest_first === false && ordering.order !== "ascending") {
-      issues.push(`Statement profile says newest_first=false, but the staged file appears ${ordering.order} by ${dateBasis} date.`);
+    if (profile.newest_first === false && filteredOrdering.order !== "ascending") {
+      issues.push(`Statement profile says newest_first=false, but the staged file appears ${filteredOrdering.order} by ${dateBasis} date after source/currency filtering.`);
     }
 
     console.log(JSON.stringify({
@@ -743,10 +749,15 @@ export function cmdImport(args: string[], params: ImportParams) {
       issues,
       missing_date_basis_events: filteredByBasis.missingBasisIds,
       out_of_period_events: outOfPeriodCount,
+      input_event_count: rawEvents.length,
+      filtered_event_count: events.length,
       event_types: eventCountsByType(scopedEvents),
       provenance_coverage: provenance,
       date_coverage: dates,
-      ordering,
+      ordering: {
+        filtered: filteredOrdering,
+        scoped: scopedOrdering,
+      },
       duplicate_refs: duplicateRefList,
       next_steps: issues.length === 0
         ? [
