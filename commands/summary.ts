@@ -10,6 +10,9 @@ export function cmdSummary(args: string[], ledgerPath: string) {
   const { after, before } = periodFromArgs(args);
   const all = readAll(ledgerPath);
   const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
+  const nonMetaEvents = events.filter((e) => !META_TYPES.has(e.type));
+  const firstEventTs = nonMetaEvents[0]?.ts ?? null;
+  const lastEventTs = nonMetaEvents[nonMetaEvents.length - 1]?.ts ?? null;
 
   const reclassifyMap = buildReclassifyMap(all);
   const byType: Record<string, { count: number; total: number }> = {};
@@ -59,6 +62,27 @@ export function cmdSummary(args: string[], ledgerPath: string) {
   }
 
   console.log(JSON.stringify({
+    requested_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source ?? null,
+    },
+    resolved_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source ?? null,
+      event_count: events.length,
+    },
+    coverage: {
+      first_event_ts: firstEventTs,
+      last_event_ts: lastEventTs,
+      source_count: Object.keys(bySource).length,
+      source_completeness: "unknown",
+      notes: [
+        "Import full source coverage when practical, then cut report periods later.",
+        "This summary reflects the resolved period/source filters above.",
+      ],
+    },
     by_type: byType,
     by_category: byCategory,
     by_month: byMonth,

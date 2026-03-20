@@ -196,12 +196,16 @@ When in doubt:
 - store references and hashes, not bulky source documents, in the ledger
 
 This workflow applies to statement-like sources generally: bank statements, card exports, processor settlements, exchange cash reports, and other row-based account activity exports.
+For bank and card statement exports, `statement-csv` is usually the correct starting scaffold.
+Prefer importing full source coverage when practical. Use report periods and date filters later in `summary`, `verify`, `review`, and `reconcile`.
+Period arguments support whole years like `2026`, months like `2026-03`, and explicit ranges like `2026-01/2026-06-30`.
 
 If you want help maintaining recurring description hints:
 
 - `clawbooks import mappings suggest` surfaces stable historical classification candidates from the ledger
 - `clawbooks import mappings check` validates a mappings file and compares it to staged imports
 - these commands are advisory only and do not update `policy.md`
+- if you do not pass `--mappings`, clawbooks checks scaffold-local paths and `.books/vendor-mappings.json`
 
 Import scaffold kinds:
 

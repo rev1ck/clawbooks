@@ -203,6 +203,8 @@ cat events.jsonl | clawbooks batch
 ```
 
 `import check --save-session` writes an operator sidecar record of the validation run. In a normal books workspace this lives under `.books/imports/sessions/`.
+`import check` also reports the resolved mappings discovery path order. If you do not pass `--mappings`, clawbooks checks the scaffold location and `.books/vendor-mappings.json`.
+When practical, ingest full source coverage first and use periods/ranges later for reporting and checking.
 
 Inspect:
 
@@ -228,6 +230,7 @@ clawbooks import check staged.jsonl --statement statement-profile.json --save-se
 For a full statement-shaped walkthrough, see [docs/statement-import-example.md](./docs/statement-import-example.md).
 
 `vendor-mappings.json` is optional and factual. It is a reusable hint file for recurring source descriptions. It does not replace or override `policy.md`.
+For statement-style scaffold workflows, keep it near the scaffold. For broader book-level reuse, `.books/vendor-mappings.json` is also discovered.
 
 Analyze and report:
 
@@ -245,6 +248,8 @@ clawbooks pack 2026-03 --out ./march-pack
 ```
 
 `review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
+`summary`, `review`, `verify`, and `reconcile` now echo their resolved scope so operators can see the actual time window and filters that were applied.
+Period arguments support whole years (`2026`), months (`2026-03`), and explicit ranges (`2026-01/2026-06-30`).
 
 Maintenance:
 

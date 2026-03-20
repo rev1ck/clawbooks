@@ -95,13 +95,24 @@ function readVendorMappings(path: string | null): { path: string | null; mapping
   }
 }
 
-function resolveVendorMappingsPath(explicitPath: string | undefined, statementPath: string | undefined, inputPath: string | undefined): string | null {
-  if (explicitPath) return resolve(explicitPath);
-  const candidates = [
+function resolveVendorMappingsPaths(
+  explicitPath: string | undefined,
+  statementPath: string | undefined,
+  inputPath: string | undefined,
+  booksDir: string | null,
+): { used: string | null; checked: string[] } {
+  const checked = [
+    explicitPath ? resolve(explicitPath) : null,
     statementPath ? join(dirname(resolve(statementPath)), "vendor-mappings.json") : null,
     inputPath ? join(dirname(resolve(inputPath)), "vendor-mappings.json") : null,
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+    booksDir ? resolve(booksDir, "vendor-mappings.json") : null,
+    booksDir ? resolve(booksDir, "imports", "vendor-mappings.json") : null,
+    booksDir ? resolve(booksDir, "imports", "statement-csv", "vendor-mappings.json") : null,
+  ].filter((candidate, index, list): candidate is string => Boolean(candidate) && list.indexOf(candidate) === index);
+  return {
+    used: checked.find((candidate) => existsSync(candidate)) ?? null,
+    checked,
+  };
 }
 
 function vendorHistory(events: LedgerEvent[]) {
@@ -1019,8 +1030,8 @@ export function cmdImport(args: string[], params: ImportParams) {
       }, null, 2));
       return;
     }
-    const mappingsPath = resolveVendorMappingsPath(f.mappings, undefined, p[2]);
-    const loadedMappings = readVendorMappings(mappingsPath);
+    const mappingsResolution = resolveVendorMappingsPaths(f.mappings, undefined, p[2], params.booksDir);
+    const loadedMappings = readVendorMappings(mappingsResolution.used);
     const ledgerEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
 
     if (action === "suggest") {
@@ -1036,6 +1047,7 @@ export function cmdImport(args: string[], params: ImportParams) {
         command: "import mappings suggest",
         ledger_path: resolve(params.ledgerPath),
         mappings_path: loadedMappings.path,
+        mappings_paths_checked: mappingsResolution.checked,
         min_occurrences: minOccurrences,
         source: sourceFilter ?? null,
         existing_mapping_count: loadedMappings.mappings.length,
@@ -1077,6 +1089,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       console.log(JSON.stringify({
         command: "import mappings check",
         mappings_path: loadedMappings.path,
+        mappings_paths_checked: mappingsResolution.checked,
         input_path: inputPath ? resolve(inputPath) : null,
         ledger_path: existsSync(params.ledgerPath) ? resolve(params.ledgerPath) : null,
         status: issues.length === 0 ? "ok" : "warn",
@@ -1110,8 +1123,8 @@ export function cmdImport(args: string[], params: ImportParams) {
     }
 
     const rawEvents = readEventsFile(resolve(inputPath));
-    const mappingsPath = resolveVendorMappingsPath(f.mappings, f.statement, inputPath);
-    const loadedMappings = readVendorMappings(mappingsPath);
+    const mappingsResolution = resolveVendorMappingsPaths(f.mappings, f.statement, inputPath, params.booksDir);
+    const loadedMappings = readVendorMappings(mappingsResolution.used);
     const ledgerHistoryEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
     let rawFilteredEvents = rawEvents;
     const currency = f.currency ?? profile.currency;
@@ -1204,6 +1217,41 @@ export function cmdImport(args: string[], params: ImportParams) {
       issues.push(`Statement profile says newest_first=false, but the staged file appears ${filteredOrdering.order} by ${dateBasis} date after source/currency filtering.`);
     }
 
+    const passedChecks = [
+      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Count mismatch")) ? ["count"] : []),
+      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Debits mismatch")) ? ["debits"] : []),
+      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Credits mismatch")) ? ["credits"] : []),
+      ...(expected.opening_balance !== undefined ? ["opening_balance"] : []),
+      ...(expected.closing_balance !== undefined && !issues.some((issue) => issue.startsWith("Closing balance mismatch")) ? ["closing_balance"] : []),
+      ...(outOfPeriodCount === 0 ? ["statement_window"] : []),
+      ...(duplicateRefList.length === 0 ? ["duplicate_refs"] : []),
+      ...(filteredByBasis.missingBasisIds.length === 0 ? ["date_basis_coverage"] : []),
+    ];
+    const sourceCoverage = {
+      raw_input_events: rawEvents.length,
+      filtered_events: events.length,
+      scoped_events: scopedEvents.length,
+      first_scoped_date: range.first,
+      last_scoped_date: range.last,
+      source_filter: profile.source ?? f.source ?? null,
+      statement_window: {
+        start: statementStart ?? null,
+        end: statementEnd ?? null,
+      },
+    };
+    const assumptions = [
+      `Date basis: ${dateBasis}`,
+      `Currency filter: ${currency ?? "none"}`,
+      `Source filter: ${profile.source ?? f.source ?? "none"}`,
+      `Mappings path used: ${loadedMappings.path ?? "none found"}`,
+    ];
+    const nextBestCommand = issues.length === 0
+      ? "clawbooks batch < staged.jsonl"
+      : "clawbooks import check staged.jsonl --statement statement-profile.json";
+    const sourceShapeHint = statementStart || statementEnd || profile.opening_balance !== undefined || profile.closing_balance !== undefined
+      ? "statement_like"
+      : "generic_event_export";
+
     console.log(JSON.stringify({
       command: "import check",
       input_path: resolve(inputPath),
@@ -1215,15 +1263,31 @@ export function cmdImport(args: string[], params: ImportParams) {
       actual,
       differences,
       status: issues.length === 0 ? "ok" : "mismatch",
+      workflow_state: issues.length === 0 ? "ready_to_append" : "needs_mapper_or_profile_adjustment",
+      what_matters: issues.length === 0
+        ? "The staged import matches the active checks. Review once more, then append."
+        : "The staged import does not yet match the active checks. Fix the mapper or statement assumptions before append.",
+      source_shape_hint: sourceShapeHint,
+      passed_checks: [...new Set(passedChecks)],
+      blocking_issues: issues,
+      assumptions,
+      next_best_command: nextBestCommand,
       issues,
       missing_date_basis_events: filteredByBasis.missingBasisIds,
       out_of_period_events: outOfPeriodCount,
       input_event_count: rawEvents.length,
       filtered_event_count: events.length,
+      source_coverage: sourceCoverage,
       event_types: eventCountsByType(scopedEvents),
       provenance_coverage: provenance,
       date_coverage: dates,
-      mapping_diagnostics: mappingsReport,
+      mapping_diagnostics: {
+        ...mappingsReport,
+        discovery: {
+          checked_paths: mappingsResolution.checked,
+          used_path: loadedMappings.path,
+        },
+      },
       ordering: {
         filtered: filteredOrdering,
         scoped: scopedOrdering,
@@ -1256,17 +1320,25 @@ export function cmdImport(args: string[], params: ImportParams) {
         status: issues.length === 0 ? "ok" : "mismatch",
         date_basis: dateBasis,
         currency: currency ?? null,
+        workflow_state: issues.length === 0 ? "ready_to_append" : "needs_mapper_or_profile_adjustment",
         expected,
         actual,
         differences,
         issue_count: issues.length,
         issues,
+        source_coverage: sourceCoverage,
         input_event_count: rawEvents.length,
         filtered_event_count: events.length,
         scoped_event_count: scopedEvents.length,
         provenance_coverage: provenance,
         date_coverage: dates,
-        mapping_diagnostics: mappingsReport,
+        mapping_diagnostics: {
+          ...mappingsReport,
+          discovery: {
+            checked_paths: mappingsResolution.checked,
+            used_path: loadedMappings.path,
+          },
+        },
         ordering: {
           filtered: filteredOrdering,
           scoped: scopedOrdering,

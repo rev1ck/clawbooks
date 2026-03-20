@@ -16,6 +16,9 @@ function visibleReviewItems(args: string[], ledgerPath: string): {
     min_magnitude: number | null;
     limit: number | null;
     group_by: string | null;
+    source: string | null;
+    after: string | null;
+    before: string | null;
   };
 } {
   const f = flags(args);
@@ -81,6 +84,9 @@ function visibleReviewItems(args: string[], ledgerPath: string): {
       min_magnitude: minMagnitude,
       limit,
       group_by: groupBy,
+      source: f.source ?? null,
+      after: after ?? null,
+      before: before ?? null,
     },
   };
 }
@@ -218,10 +224,18 @@ export function cmdReview(args: string[], ledgerPath: string) {
     suggested_order: items.map((event) => event.id),
     total_visible_items: items.length,
   };
+  const nextBestCommand = items.length === 0
+    ? "clawbooks summary"
+    : "clawbooks review batch --out review-actions.jsonl --action confirm --confidence inferred";
 
   console.log(JSON.stringify({
     needs_review,
     filters,
+    resolved_scope: {
+      after: filters.after,
+      before: filters.before,
+      source: filters.source,
+    },
     by_confidence: {
       unclear: visibleTiers.unclear.length,
       inferred: visibleTiers.inferred.length,
@@ -237,6 +251,11 @@ export function cmdReview(args: string[], ledgerPath: string) {
       filtered_queue: filteredMateriality,
     },
     queue: queueSummary,
+    workflow_state: items.length === 0 ? "queue_empty" : "queue_ready",
+    what_matters: items.length === 0
+      ? "No review items matched the current filters."
+      : `${items.length} item(s) are ready for review, ordered by materiality.`,
+    next_best_command: nextBestCommand,
     groups,
     next_actions: nextActions,
     items: items.map((event) => {

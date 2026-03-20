@@ -88,6 +88,7 @@ assert(summaryShortcut.report_totals.owner_distributions === 50, "owner draws sh
 assert(verify.balance_check.matches === true, "opening-balance-aware verify should match");
 assert(verify.balance_check.net_movement === 280, "net movement should be 280");
 assert(verify.balance_check.closing_balance === 1280, "closing balance should be 1280");
+assert(verify.resolved_scope.event_count === 5, "verify should echo resolved scope event count");
 assert(stats.first === "2026-01-01T00:00:00.000Z", "stats.first should be chronological");
 assert(stats.last === "2026-02-20T00:00:00.000Z", "stats.last should be chronological");
 assert(snapshot.movement_summary.operating_inflows === 500, "snapshot should include operating movement summary");
@@ -273,6 +274,9 @@ EOF
 cat > "$IMPORT_ROOT/.books/policy.md" <<'EOF'
 # test policy
 EOF
+cat > "$IMPORT_ROOT/.books/vendor-mappings.json" <<'EOF'
+{"mappings":[{"match":"PAYROLL","type":"income","category":"service_revenue","confidence":"inferred"}]}
+EOF
 cat > "$IMPORT_ROOT/staged.jsonl" <<'EOF'
 {"ts":"2026-03-05T00:00:00.000Z","source":"statement_import","type":"income","data":{"amount":200,"currency":"USD","description":"PAYROLL","category":"service_revenue","confidence":"inferred","transaction_date":"2026-03-04","posting_date":"2026-03-05"}}
 {"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","description":"APPLE.COM/BILL","category":"software_and_digital_services","confidence":"inferred","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
@@ -290,7 +294,15 @@ grep -q '"provenance_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import che
 grep -q '"filtered_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report filtered event count"; exit 1; }
 grep -q '"mapping_diagnostics"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping diagnostics"; exit 1; }
 grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping coverage"; exit 1; }
+grep -q '"what_matters"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should include operator-facing summary text"; exit 1; }
+grep -q '"source_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report source coverage"; exit 1; }
 test -f "$IMPORT_ROOT/.books/imports/sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
+
+IMPORT_CHECK_DISCOVERY="$IMPORT_ROOT/import-check-discovery.json"
+(cd "$IMPORT_ROOT" && $CLI import check staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_CHECK_DISCOVERY"
+grep -q '"available": true' "$IMPORT_CHECK_DISCOVERY" || { echo "FAIL: import check should discover .books/vendor-mappings.json"; exit 1; }
+grep -q '"checked_paths"' "$IMPORT_CHECK_DISCOVERY" || { echo "FAIL: import check should report mappings discovery paths"; exit 1; }
+grep -q '".*/.books/vendor-mappings.json"' "$IMPORT_CHECK_DISCOVERY" || { echo "FAIL: import check should include .books/vendor-mappings.json in discovery"; exit 1; }
 
 IMPORT_MAPPINGS_SUGGEST="$IMPORT_ROOT/import-mappings-suggest.json"
 (cd "$IMPORT_ROOT" && $CLI import mappings suggest --source statement_import 2>&1) > "$IMPORT_MAPPINGS_SUGGEST"
@@ -473,6 +485,8 @@ grep -q '"review_materiality"' "$SUMMARY_DOCS" || { echo "FAIL: summary should i
 grep -q '"correction_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include correction_summary"; exit 1; }
 grep -q '"confirm_events": 1' "$SUMMARY_DOCS" || { echo "FAIL: summary should include confirm count"; exit 1; }
 grep -q '"correction_events": 1' "$SUMMARY_DOCS" || { echo "FAIL: summary should include correction count"; exit 1; }
+grep -q '"resolved_scope"' "$SUMMARY_DOCS" || { echo "FAIL: summary should echo resolved scope"; exit 1; }
+grep -q '"coverage"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include coverage metadata"; exit 1; }
 
 CONTEXT_DOCS="$DOCS_ROOT/context-docs.txt"
 (cd "$DOCS_ROOT" && $CLI context 2026-03 2>&1) > "$CONTEXT_DOCS"
@@ -486,6 +500,8 @@ REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
 grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
 grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
 grep -q '"reason_in_queue"' "$REVIEW_DOCS" || { echo "FAIL: review should explain why items are in queue"; exit 1; }
+grep -q '"resolved_scope"' "$REVIEW_DOCS" || { echo "FAIL: review should echo resolved scope"; exit 1; }
+grep -q '"next_best_command"' "$REVIEW_DOCS" || { echo "FAIL: review should suggest a next best command"; exit 1; }
 
 REVIEW_FILTERED="$DOCS_ROOT/review-filtered.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 --confidence inferred --min-magnitude 100 --group-by category 2>&1) > "$REVIEW_FILTERED"
@@ -517,6 +533,7 @@ RECONCILE_DATE_BASIS="$DOCS_ROOT/reconcile-date-basis.json"
 (cd "$DOCS_ROOT" && $CLI reconcile 2026-03 --source bank --date-basis posting --count 4 --opening-balance 100 --closing-balance 115 2>&1) > "$RECONCILE_DATE_BASIS"
 grep -q '"date_basis": "posting"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile should report date basis"; exit 1; }
 grep -q '"closing_balance"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile should include closing balance checks"; exit 1; }
+grep -q '"resolved_scope"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile should echo resolved scope"; exit 1; }
 
 PACK_OUT="$DOCS_ROOT/pack"
 mkdir -p "$PACK_OUT"

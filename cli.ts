@@ -205,6 +205,7 @@ Import check notes:
                               such as period, balances, row count, and date basis
   --save-session              Save a sidecar import session JSON for operator traceability
   --mappings <file>           Use an explicit vendor-mappings.json file for factual consistency checks
+                              If omitted, clawbooks checks scaffold-local paths and .books/vendor-mappings.json
 
 Vendor mapping notes:
   Vendor mappings are optional operator-maintained hints for recurring descriptions.
@@ -220,6 +221,7 @@ Verify flags:
   --currency <C>              Filter balance check to a specific currency
 
 Period format:
+  2026                        Whole year
   2026-03                     Single month
   2026-01/2026-06-30          Date range
 
@@ -264,6 +266,7 @@ Validate staged JSONL before append. --statement loads explicit expectations suc
   - date basis
 
 If a vendor mappings file is present, import check surfaces coverage and consistency signals.
+Import full source coverage when practical, then cut periods later in summary/verify/review.
 
 Examples:
   clawbooks import check staged.jsonl --statement statement-profile.json
@@ -278,6 +281,7 @@ Examples:
     review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type]
 
 Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.
+Review echoes the resolved scope and the next best command for working the queue.
 
 Examples:
   clawbooks review 2026-03
@@ -291,7 +295,7 @@ Examples:
   clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software`,
     summary: `Usage: clawbooks summary [period] [flags]
 
-Produce report aggregates, report sections, settlement summaries, and review materiality.
+Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
 
 Examples:
   clawbooks summary 2026-03
@@ -314,6 +318,7 @@ Examples:
     verify: `Usage: clawbooks verify [period] [--balance N] [--opening-balance N] [--currency C]
 
 Run integrity, duplicate, sign, and balance checks on the ledger.
+Verify echoes the resolved scope so period handling is explicit.
 
 Examples:
   clawbooks verify 2026-03

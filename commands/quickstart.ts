@@ -73,6 +73,7 @@ export function cmdQuickstart(params: {
       "Read policy.md.",
       "Read event-schema.md if you are importing or revising event shapes.",
       "Use `clawbooks import scaffold <kind>` if you want a mapper template before writing import code.",
+      "Prefer importing full source coverage when practical; cut periods later for reporting and checks.",
       "For statement-shaped imports, run `clawbooks import check ... --statement ... --save-session` before append.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
       "Run `clawbooks verify` and `clawbooks reconcile` after imports when source totals are available.",
@@ -82,6 +83,7 @@ export function cmdQuickstart(params: {
       import: [
         "Inspect the source files and normalize them into clawbooks events.",
         "If you need a starting point, generate an editable template with `clawbooks import scaffold <kind>`.",
+        "For a bank or card statement export, `statement-csv` is usually the right scaffold.",
         "If recurring descriptions matter, keep optional factual hints in vendor-mappings.json and let the mapper consult that file.",
         "Preserve provenance such as data.ref, data.source_doc, data.source_row, data.source_hash, and data.provenance.",
         "Write events with `clawbooks record` or `clawbooks batch`.",

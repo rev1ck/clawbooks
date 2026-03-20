@@ -23,6 +23,7 @@ This creates:
 - `vendor-mappings.json`
 
 `vendor-mappings.json` is optional. It stores recurring description hints that the mapper may consult. It does not replace `policy.md`.
+If you do not pass `--mappings`, `import check` first looks near the scaffold/profile path and also checks `.books/vendor-mappings.json`.
 
 3. Edit the mapper to match the source columns.
 

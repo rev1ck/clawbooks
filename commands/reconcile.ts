@@ -112,9 +112,28 @@ export function cmdReconcile(args: string[], ledgerPath: string) {
   }
 
   console.log(JSON.stringify({
+    requested_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source,
+      currency: f.currency ?? null,
+    },
     date_basis: dateBasis,
     period: { after: after ?? null, before: before ?? null },
+    resolved_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source,
+      currency: f.currency ?? null,
+      event_count: events.length,
+    },
     expected, actual, differences, status, issues,
+    what_matters: status === "RECONCILED"
+      ? "Imported totals matched the active reconciliation checks."
+      : status === "MISMATCH"
+        ? "One or more reconciliation checks failed."
+        : "No explicit expectations were supplied, so reconcile reported actuals only.",
+    next_best_command: status === "RECONCILED" ? "clawbooks review" : "clawbooks import check",
     net_movement: netMovement,
     missing_date_basis_events: dated.missingBasisIds.length,
     ...(gaps ? { gaps } : {}),

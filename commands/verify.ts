@@ -167,5 +167,27 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     currency: f.currency,
   });
 
-  console.log(JSON.stringify(report, null, 2));
+  console.log(JSON.stringify({
+    requested_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source ?? null,
+      currency: f.currency ?? null,
+    },
+    resolved_scope: {
+      after: after ?? null,
+      before: before ?? null,
+      source: f.source ?? null,
+      currency: f.currency ?? null,
+      event_count: report.event_count,
+    },
+    workflow_state: report.event_count === 0 ? "empty_scope" : "checked",
+    what_matters: report.event_count === 0
+      ? "No events matched the resolved scope. Double-check the period, source, or books path."
+      : "Integrity and balance checks ran against the resolved scope above.",
+    next_best_command: report.event_count === 0
+      ? "clawbooks where"
+      : "clawbooks summary",
+    ...report,
+  }, null, 2));
 }
