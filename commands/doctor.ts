@@ -7,7 +7,7 @@ import { latestImportSession } from "../import-sessions.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
 import { buildReviewMateriality } from "../review.js";
 import { CLI_VERSION } from "../version.js";
-import { buildWorkflowStatus } from "../workflow-state.js";
+import { buildWorkflowStatus, deriveReportingMode } from "../workflow-state.js";
 import { analyzeVerification } from "./verify.js";
 
 export function cmdDoctor(params: {
@@ -41,7 +41,7 @@ export function cmdDoctor(params: {
   const duplicateGroups = verification?.potential_duplicates?.length ?? 0;
   const chainValid = verification?.chain_valid ?? null;
   const issueCount = verification?.issues.length ?? 0;
-  const latestSession = latestImportSession(params.booksDir);
+  const latestSession = latestImportSession(params.booksDir, params.policyPath);
   const importSessionsDir = params.booksDir ? resolve(params.booksDir, "imports", "sessions") : null;
   const importsDir = params.booksDir ? resolve(params.booksDir, "imports") : null;
   const reviewMateriality = buildReviewMateriality(nonMetaEvents, all);
@@ -129,9 +129,7 @@ export function cmdDoctor(params: {
     readinessReasons.push("review queue still contains material unresolved items.");
   }
   const effectiveClassificationBasis = latestSession?.classification_basis ?? workflow.classification_basis;
-  const effectiveReportingMode = reportingReadiness === "ready" && String(effectiveClassificationBasis).startsWith("policy_")
-    ? "policy_grounded"
-    : "provisional";
+  const effectiveReportingMode = deriveReportingMode(reportingReadiness, String(effectiveClassificationBasis));
   const suggestedNextCommand = !ledgerExists && !policyExists
     ? "clawbooks quickstart"
     : workflow.reporting_readiness !== "ready"

@@ -28,9 +28,9 @@ export function cmdPack(args: string[], params: PackParams) {
   const { after, before } = periodFromArgs(args);
   const workflow = buildWorkflowStatus({ booksDir: params.booksDir ?? null, policyPath: params.policyPath });
   const allowProvisional = f["allow-provisional"] === "true";
-  if (workflow.reporting_readiness !== "ready" && !allowProvisional) {
-    console.error("Audit pack generation is provisional because program.md and policy.md are not acknowledged for the current run.");
-    console.error("Run `clawbooks workflow ack --program --policy` first, or re-run with `--allow-provisional` if you intentionally want a provisional pack.");
+  if (workflow.reporting_mode !== "policy_grounded" && !allowProvisional) {
+    console.error("Audit pack generation is provisional because the current run is not policy-grounded.");
+    console.error("Run `clawbooks workflow ack --program --policy` and confirm a policy_* classification basis, or re-run with `--allow-provisional` if you intentionally want a provisional pack.");
     process.exit(1);
   }
   const packBase = params.booksDir ?? ".";

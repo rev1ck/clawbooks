@@ -1,7 +1,7 @@
 import { append, computeId, type LedgerEvent } from "../ledger.js";
 import { flags, positional } from "../cli-helpers.js";
 import { enforceSign } from "../event-types.js";
-import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
+import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdRecord(args: string[], ledgerPath: string) {
   const workflowPaths = inferWorkflowPaths(ledgerPath);
@@ -29,9 +29,11 @@ export function cmdRecord(args: string[], ledgerPath: string) {
   }
   const classificationBasis = f["classification-basis"]
     ?? (workflow.reporting_readiness === "ready" ? "policy_guided" : "manual_operator");
-  const reportingMode = workflow.reporting_readiness === "ready" && classificationBasis.startsWith("policy_")
-    ? "policy_grounded"
-    : "provisional";
+  if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
+    console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
+    process.exit(1);
+  }
+  const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
 
   enforceSign(parsed.type, parsed.data);
 

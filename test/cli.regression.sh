@@ -409,6 +409,9 @@ RECORD_WRITE_JSON="$BOOKS_ROOT/record-write.json"
 (cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD","description":"write metadata test"}}' 2>&1) > "$RECORD_WRITE_JSON"
 grep -q '"classification_basis"' "$RECORD_WRITE_JSON" || { echo "FAIL: record should surface classification basis"; exit 1; }
 grep -q '"status_line"' "$RECORD_WRITE_JSON" || { echo "FAIL: record should expose a status line"; exit 1; }
+if (cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD"}}' --classification-basis nope >/dev/null 2>&1); then
+  echo "FAIL: record should reject invalid classification basis"; exit 1
+fi
 
 # Test 10: CLAWBOOKS_BOOKS env var works
 BOOKS_STATS2="$BOOKS_ROOT/books-stats2.json"
@@ -428,6 +431,9 @@ BATCH_WRITE_JSON="$BATCH_DIR/batch-write.json"
 (cd "$BATCH_DIR" && $CLI batch --classification-basis manual_operator < events.jsonl 2>&1) > "$BATCH_WRITE_JSON"
 grep -q '"classification_basis":"manual_operator"\|"classification_basis": "manual_operator"' "$BATCH_WRITE_JSON" || { echo "FAIL: batch should accept and surface classification basis"; exit 1; }
 grep -q '"status_line"' "$BATCH_WRITE_JSON" || { echo "FAIL: batch should expose a status line"; exit 1; }
+if (cd "$BATCH_DIR" && $CLI batch --classification-basis nope < events.jsonl >/dev/null 2>&1); then
+  echo "FAIL: batch should reject invalid classification basis"; exit 1
+fi
 rm -rf "$BATCH_DIR"
 
 # Test 11: walk-up resolution from subdirectory

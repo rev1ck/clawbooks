@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { computeId, hashLine, type LedgerEvent } from "../ledger.js";
 import { META_TYPES, enforceSign } from "../event-types.js";
-import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
+import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode, inferWorkflowPaths } from "../workflow-state.js";
 import { flags } from "../cli-helpers.js";
 
 export function cmdBatch(args: string[], input: string, ledgerPath: string) {
@@ -11,9 +11,11 @@ export function cmdBatch(args: string[], input: string, ledgerPath: string) {
   const allowProvisional = f["allow-provisional"] === "true";
   const classificationBasis = f["classification-basis"]
     ?? (workflow.reporting_readiness === "ready" ? "policy_guided" : "manual_operator");
-  const reportingMode = workflow.reporting_readiness === "ready" && classificationBasis.startsWith("policy_")
-    ? "policy_grounded"
-    : "provisional";
+  if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
+    console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
+    process.exit(1);
+  }
+  const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
   if (!input.trim()) {
     console.error("Pipe JSONL to stdin. Each line: {source, type, data, ts?}");
     console.error("  cat events.jsonl | clawbooks batch");

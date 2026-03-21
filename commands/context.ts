@@ -67,7 +67,7 @@ export function cmdContext(args: string[], params: ContextParams) {
   if (workflow.reporting_readiness !== "ready" && workflow.warning) {
     console.log(`Workflow warning: ${workflow.warning}`);
     if (!allowProvisional) {
-      console.log(`This context is provisional. Re-run with --allow-provisional if you intentionally want exploratory output before policy acknowledgment.`);
+      console.log(`Use --allow-provisional to explicitly acknowledge exploratory output in automation or scripted runs.`);
     }
   }
   console.log(`Use the policy path in metadata or run \`clawbooks policy\` to inspect the full policy text.`);

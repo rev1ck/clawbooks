@@ -1,5 +1,5 @@
 import { flags, positional } from "../cli-helpers.js";
-import { buildWorkflowStatus, fileSha256, readWorkflowState, resolveWorkflowStatePath, writeWorkflowState } from "../workflow-state.js";
+import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, fileSha256, readWorkflowState, resolveWorkflowStatePath, writeWorkflowState } from "../workflow-state.js";
 import { resolveProgramPath } from "../books.js";
 
 export function cmdWorkflow(args: string[], params: {
@@ -9,11 +9,9 @@ export function cmdWorkflow(args: string[], params: {
   const p = positional(args);
   const f = flags(args);
   const subcommand = p[0] ?? "status";
-  const validClassificationBases = new Set(["policy_explicit", "policy_guided", "heuristic_pattern", "manual_operator", "mixed", "unknown"]);
-
   if (subcommand === "ack") {
     const classificationBasis = f["classification-basis"] ?? "policy_guided";
-    if (!validClassificationBases.has(classificationBasis)) {
+    if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
       console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
       process.exit(1);
     }

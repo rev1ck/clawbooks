@@ -4,6 +4,24 @@ import { basename, dirname, join, resolve } from "node:path";
 import { resolveProgramPath } from "./books.js";
 import { latestImportSession } from "./import-sessions.js";
 
+export const VALID_CLASSIFICATION_BASES = new Set([
+  "policy_explicit",
+  "policy_guided",
+  "heuristic_pattern",
+  "manual_operator",
+  "mixed",
+  "unknown",
+]);
+
+export function deriveReportingMode(
+  reportingReadiness: "blocked" | "caution" | "ready",
+  classificationBasis: string,
+): "policy_grounded" | "provisional" {
+  return reportingReadiness === "ready" && classificationBasis.startsWith("policy_")
+    ? "policy_grounded"
+    : "provisional";
+}
+
 export type WorkflowAckFile = {
   current: {
     program: {
@@ -73,7 +91,7 @@ export function buildWorkflowStatus(params: {
   const programAckStale = Boolean(current?.program && current.program.sha256 !== programHash);
   const policyAckStale = Boolean(current?.policy && current.policy.sha256 !== policyHash);
 
-  const latestSession = latestImportSession(params.booksDir);
+  const latestSession = latestImportSession(params.booksDir, params.policyPath);
   let reportingReadiness: "blocked" | "caution" | "ready" = "ready";
   if (!program.exists || !existsSync(params.policyPath)) {
     reportingReadiness = "blocked";
@@ -88,11 +106,14 @@ export function buildWorkflowStatus(params: {
     classificationBasis = latestSession.classification_basis;
   }
 
-  const warning = reportingReadiness === "ready"
-    ? null
-    : !program.exists || !existsSync(params.policyPath)
+  const reportingMode = deriveReportingMode(reportingReadiness, classificationBasis);
+  const warning = reportingReadiness !== "ready"
+    ? !program.exists || !existsSync(params.policyPath)
       ? "program.md or policy.md is missing, so reporting is blocked."
-      : "program.md and policy.md may not have been reviewed for the current run. Results may be heuristic rather than policy-grounded.";
+      : "program.md and policy.md may not have been reviewed for the current run. Results may be heuristic rather than policy-grounded."
+    : reportingMode !== "policy_grounded"
+      ? "Latest import or write state is not policy-grounded. Treat outputs as provisional."
+      : null;
 
   const programStatus = !program.exists
     ? "missing"
@@ -154,7 +175,7 @@ export function buildWorkflowStatus(params: {
           ? "policy_blocked"
           : "policy_unacknowledged",
     reporting_readiness: reportingReadiness,
-    reporting_mode: reportingReadiness === "ready" ? "policy_grounded" : "provisional",
+    reporting_mode: reportingMode,
     classification_basis: classificationBasis,
     warning,
   };

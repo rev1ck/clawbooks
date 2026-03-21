@@ -5,7 +5,7 @@ import { round2, sortByTimestamp } from "../reporting.js";
 import { filterByDateBasis, type DateBasis } from "../imports.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
-import { buildWorkflowStatus } from "../workflow-state.js";
+import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode } from "../workflow-state.js";
 
 type ImportParams = {
   booksDir: string | null;
@@ -379,10 +379,10 @@ function validateMappingsFile(mappings: VendorMapping[]) {
   };
 }
 
-function sessionsDirFor(booksDir: string | null): string {
+function sessionsDirFor(booksDir: string | null, ledgerPath: string): string {
   return booksDir && existsSync(booksDir)
     ? resolve(booksDir, "imports", "sessions")
-    : resolve("clawbooks-import-sessions");
+    : resolve(dirname(resolve(ledgerPath)), "clawbooks-import-sessions");
 }
 
 function readSessionRecord(path: string): ImportSessionRecord | null {
@@ -393,8 +393,8 @@ function readSessionRecord(path: string): ImportSessionRecord | null {
   }
 }
 
-function listSessionFiles(booksDir: string | null): string[] {
-  const dir = sessionsDirFor(booksDir);
+function listSessionFiles(booksDir: string | null, ledgerPath: string): string[] {
+  const dir = sessionsDirFor(booksDir, ledgerPath);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((name) => name.endsWith(".json"))
@@ -1087,11 +1087,10 @@ export function cmdImport(args: string[], params: ImportParams) {
     booksDir: params.booksDir,
     policyPath: join(dirname(resolve(params.ledgerPath)), "policy.md"),
   });
-  const validClassificationBases = new Set(["policy_explicit", "policy_guided", "heuristic_pattern", "manual_operator", "mixed", "unknown"]);
 
   if (p[0] === "sessions") {
     const action = p[1] ?? "list";
-    const files = listSessionFiles(params.booksDir);
+    const files = listSessionFiles(params.booksDir, params.ledgerPath);
     const sessions = files
       .map((path) => ({ path, session: readSessionRecord(path) }))
       .filter((entry): entry is { path: string; session: ImportSessionRecord } => entry.session !== null)
@@ -1100,7 +1099,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     if (action === "list") {
       console.log(JSON.stringify({
         command: "import sessions list",
-        sessions_dir: sessionsDirFor(params.booksDir),
+        sessions_dir: sessionsDirFor(params.booksDir, params.ledgerPath),
         session_count: sessions.length,
         sessions: sessions.slice(-20).reverse().map(({ path, session }) => ({
           import_session: session.import_session,
@@ -1499,13 +1498,11 @@ export function cmdImport(args: string[], params: ImportParams) {
           : f["recorded-by"]
             ? "manual_operator"
             : "unknown");
-    if (!validClassificationBases.has(classificationBasis)) {
+    if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
       console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
       process.exit(1);
     }
-    const reportingMode = workflow.reporting_readiness === "ready" && classificationBasis.startsWith("policy_")
-      ? "policy_grounded"
-      : "provisional";
+    const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
 
     console.log(JSON.stringify({
       command: "import check",
@@ -1565,7 +1562,7 @@ export function cmdImport(args: string[], params: ImportParams) {
 
     if (f["save-session"] === "true") {
       const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-      const sessionsDir = sessionsDirFor(params.booksDir);
+      const sessionsDir = sessionsDirFor(params.booksDir, params.ledgerPath);
       mkdirSync(sessionsDir, { recursive: true });
       const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
       const sessionRecord: ImportSessionRecord = {

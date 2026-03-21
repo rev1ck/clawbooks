@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 
 export type ImportSessionSummary = {
   import_session: string;
@@ -13,14 +13,14 @@ export type ImportSessionSummary = {
   path: string;
 };
 
-export function sessionsDirFor(booksDir: string | null): string {
+export function sessionsDirFor(booksDir: string | null, anchorPath?: string): string {
   return booksDir
     ? resolve(booksDir, "imports", "sessions")
-    : resolve("clawbooks-import-sessions");
+    : resolve(anchorPath ? dirname(resolve(anchorPath)) : ".", "clawbooks-import-sessions");
 }
 
-export function listImportSessions(booksDir: string | null): ImportSessionSummary[] {
-  const dir = sessionsDirFor(booksDir);
+export function listImportSessions(booksDir: string | null, anchorPath?: string): ImportSessionSummary[] {
+  const dir = sessionsDirFor(booksDir, anchorPath);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((name) => name.endsWith(".json"))
@@ -37,7 +37,7 @@ export function listImportSessions(booksDir: string | null): ImportSessionSummar
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
-export function latestImportSession(booksDir: string | null): ImportSessionSummary | null {
-  const sessions = listImportSessions(booksDir);
+export function latestImportSession(booksDir: string | null, anchorPath?: string): ImportSessionSummary | null {
+  const sessions = listImportSessions(booksDir, anchorPath);
   return sessions.at(-1) ?? null;
 }
