@@ -6,6 +6,7 @@ import { cmdPolicy } from "./commands/policy.js";
 import { cmdWhere } from "./commands/where.js";
 import { cmdDoctor } from "./commands/doctor.js";
 import { cmdQuickstart } from "./commands/quickstart.js";
+import { cmdWorkflow } from "./commands/workflow.js";
 import { cmdVersion } from "./commands/version.js";
 import { cmdDocuments } from "./commands/documents.js";
 import { cmdSummary } from "./commands/summary.js";
@@ -96,6 +97,7 @@ Setup:
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
+  workflow  [status|ack]              Record or inspect workflow acknowledgment state
   version    [--latest]               Print the installed version or compare to npm
 
 Import:
@@ -140,6 +142,8 @@ Important terms:
 Quick examples:
   clawbooks quickstart
   clawbooks doctor
+  clawbooks workflow ack --program --policy
+  clawbooks workflow status
   clawbooks version
   clawbooks version --latest
   clawbooks init
@@ -384,7 +388,7 @@ Example:
 // --- Dispatch ---
 
 const WRITE_COMMANDS = new Set(["record", "batch", "init", "snapshot", "compact"]);
-const READ_COMMANDS = new Set(["log", "context", "documents", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack"]);
+const READ_COMMANDS = new Set(["log", "context", "documents", "policy", "stats", "verify", "reconcile", "review", "summary", "assets", "pack", "workflow"]);
 
 const [cmd, ...args] = argv;
 
@@ -404,6 +408,11 @@ if (WRITE_COMMANDS.has(cmd) && cmd !== "init") {
   }
 } else if (READ_COMMANDS.has(cmd)) {
   requireBooks(LEDGER);
+}
+
+if (cmd === "workflow") {
+  if (args[0] === "ack") ensureBooksDir(BOOKS_DIR, LEDGER, POLICY);
+  else requireBooks(LEDGER);
 }
 
 switch (cmd) {
@@ -431,6 +440,11 @@ switch (cmd) {
       ledgerPath: LEDGER,
       policyPath: POLICY,
       resolution: BOOKS_RESOLUTION,
+    }); break;
+  case "workflow":
+    cmdWorkflow(args, {
+      booksDir: BOOKS_DIR,
+      policyPath: POLICY,
     }); break;
   case "doctor":
     cmdDoctor({

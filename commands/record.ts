@@ -1,8 +1,11 @@
 import { append, computeId, type LedgerEvent } from "../ledger.js";
 import { positional } from "../cli-helpers.js";
 import { enforceSign } from "../event-types.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdRecord(args: string[], ledgerPath: string) {
+  const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const json = positional(args)[0];
   if (!json) {
     console.error("Usage: clawbooks record '<json>'");
@@ -37,9 +40,9 @@ export function cmdRecord(args: string[], ledgerPath: string) {
 
   try {
     if (append(ledgerPath, event)) {
-      console.log(JSON.stringify({ recorded: true, id: event.id }));
+      console.log(JSON.stringify({ recorded: true, id: event.id, workflow }));
     } else {
-      console.log(JSON.stringify({ recorded: false, reason: "duplicate", id: event.id }));
+      console.log(JSON.stringify({ recorded: false, reason: "duplicate", id: event.id, workflow }));
     }
   } catch (err) {
     console.error(String((err as Error).message));

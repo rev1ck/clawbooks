@@ -2,6 +2,7 @@ import { filter, latestSnapshot, readAll } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { sortByTimestamp } from "../reporting.js";
 import { buildCompactContextSummary, buildContextSummary } from "../context.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 type ContextParams = {
   ledgerPath: string;
@@ -15,6 +16,8 @@ export function cmdContext(args: string[], params: ContextParams) {
   const all = readAll(params.ledgerPath);
   const verbose = f.verbose === "true";
   const includePolicy = f["include-policy"] === "true";
+  const workflowPaths = inferWorkflowPaths(params.ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: params.policyPath });
 
   const snapshot = latestSnapshot(all, after);
   const effectiveAfter = snapshot?.ts ?? after;
@@ -47,6 +50,7 @@ export function cmdContext(args: string[], params: ContextParams) {
     sources: summary.sources,
     event_types: summary.event_types,
     currencies: summary.currencies,
+    workflow,
   };
 
   console.log(`<context schema="clawbooks.context.v2">`);
@@ -57,6 +61,9 @@ export function cmdContext(args: string[], params: ContextParams) {
 
   console.log(`<instructions>`);
   console.log(`Read the policy first.`);
+  if (workflow.reporting_readiness !== "ready" && workflow.warning) {
+    console.log(`Workflow warning: ${workflow.warning}`);
+  }
   console.log(`Use the policy path in metadata or run \`clawbooks policy\` to inspect the full policy text.`);
   if (snapshot) {
     console.log(`Treat the snapshot as the starting state up to its as_of timestamp.`);

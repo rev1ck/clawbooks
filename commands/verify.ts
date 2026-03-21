@@ -3,6 +3,7 @@ import { filter, hashLine, readAll, type LedgerEvent } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { round2, sortByTimestamp } from "../reporting.js";
 import { ASSET_EVENT_TYPES, DOCUMENT_TYPES, INFLOW_TYPES, META_TYPES, OUTFLOW_TYPES } from "../event-types.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function analyzeVerification(all: LedgerEvent[], opts?: {
   source?: string;
@@ -157,6 +158,8 @@ export function analyzeVerification(all: LedgerEvent[], opts?: {
 export function cmdVerify(args: string[], ledgerPath: string) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
+  const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const all = readAll(ledgerPath);
   const report = analyzeVerification(all, {
     source: f.source,
@@ -168,6 +171,7 @@ export function cmdVerify(args: string[], ledgerPath: string) {
   });
 
   console.log(JSON.stringify({
+    workflow,
     requested_scope: {
       after: after ?? null,
       before: before ?? null,

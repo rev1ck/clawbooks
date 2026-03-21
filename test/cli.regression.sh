@@ -150,6 +150,20 @@ test -f "$BOOKS_ROOT/.books/program.md" || { echo "FAIL: init should create prog
 grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy should contain usable policy content"; exit 1; }
 grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
 grep -q "Next agent step: run \`clawbooks quickstart\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to quickstart"; exit 1; }
+grep -q "Workflow reminder for agents:" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should include workflow reminder"; exit 1; }
+
+# Test 1b: workflow status and ack operate on local program/policy
+WORKFLOW_STATUS="$BOOKS_ROOT/workflow-status.json"
+(cd "$BOOKS_ROOT" && $CLI workflow status 2>&1) > "$WORKFLOW_STATUS"
+grep -q '"workflow_state": "policy_unacknowledged"' "$WORKFLOW_STATUS" || { echo "FAIL: workflow status should start unacknowledged"; exit 1; }
+grep -q '"reporting_readiness": "caution"' "$WORKFLOW_STATUS" || { echo "FAIL: workflow status should start in caution"; exit 1; }
+
+WORKFLOW_ACK="$BOOKS_ROOT/workflow-ack.json"
+(cd "$BOOKS_ROOT" && $CLI workflow ack --program --policy --agent codex 2>&1) > "$WORKFLOW_ACK"
+grep -q '"command": "workflow ack"' "$WORKFLOW_ACK" || { echo "FAIL: workflow ack should identify itself"; exit 1; }
+grep -q '"workflow_state": "policy_acknowledged"' "$WORKFLOW_ACK" || { echo "FAIL: workflow ack should mark policy acknowledged"; exit 1; }
+grep -q '"reporting_readiness": "ready"' "$WORKFLOW_ACK" || { echo "FAIL: workflow ack should mark readiness ready"; exit 1; }
+test -f "$BOOKS_ROOT/.books/workflow-state.json" || { echo "FAIL: workflow ack should persist workflow-state.json"; exit 1; }
 
 # Test 2: init is idempotent
 (cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output2.txt"
@@ -221,6 +235,7 @@ grep -q '"agent_bootstrap_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should r
 grep -q '"event_schema_path"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report event schema path"; exit 1; }
 grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_JSON" || { echo "FAIL: doctor should point users to quickstart"; exit 1; }
 grep -q '"readiness": "missing"' "$DOCTOR_JSON" || { echo "FAIL: doctor should report missing policy readiness"; exit 1; }
+grep -q '"workflow"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include workflow readiness"; exit 1; }
 grep -q '"ledger_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include ledger health"; exit 1; }
 grep -q '"snapshot_health"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include snapshot health"; exit 1; }
 grep -q '"operator_mistakes"' "$DOCTOR_JSON" || { echo "FAIL: doctor should include operator warnings"; exit 1; }
@@ -232,6 +247,7 @@ QUICKSTART_JSON="$EMPTY_DIR3/quickstart.json"
 grep -q '"command": "quickstart"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should identify itself"; exit 1; }
 grep -q '"core_files"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should define core files"; exit 1; }
 grep -q '"event_schema"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should point to the event schema"; exit 1; }
+grep -q '"workflow"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should include workflow readiness"; exit 1; }
 grep -q '"produce_outputs"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe output generation workflow"; exit 1; }
 grep -q '"import_support"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe import support surfaces"; exit 1; }
 

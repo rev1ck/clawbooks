@@ -1,8 +1,11 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { computeId, hashLine, type LedgerEvent } from "../ledger.js";
 import { META_TYPES, enforceSign } from "../event-types.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdBatch(input: string, ledgerPath: string) {
+  const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   if (!input.trim()) {
     console.error("Pipe JSONL to stdin. Each line: {source, type, data, ts?}");
     console.error("  cat events.jsonl | clawbooks batch");
@@ -69,5 +72,5 @@ export function cmdBatch(input: string, ledgerPath: string) {
     console.error(errorMessages.join("\n"));
   }
 
-  console.log(JSON.stringify({ recorded, skipped, errors }));
+  console.log(JSON.stringify({ recorded, skipped, errors, workflow }));
 }

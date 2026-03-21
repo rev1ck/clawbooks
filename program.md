@@ -4,6 +4,30 @@ You have access to `clawbooks`, a CLI tool for financial record-keeping.
 The ledger is an append-only JSONL file. The accounting policy is a markdown file.
 You are the accountant. The CLI is just data storage.
 
+## Required operating sequence for agents
+
+When using clawbooks for real import or reporting work:
+
+1. Read `program.md`
+2. Read `policy.md`
+3. Inspect the raw source documents
+4. Import normalized events
+5. Run `verify`
+6. Run `review`
+7. Generate reporting only after distinguishing policy-backed treatment from inferred treatment
+
+If you skip `program.md` or `policy.md`, your output is not policy-grounded.
+Treat it as provisional.
+
+### Common mistakes to avoid
+
+- Bank credits are not automatically income.
+- Transfers are not automatically revenue.
+- Exchange withdrawals may be treasury movement rather than P&L activity.
+- Owner-funded or owner-paid transactions may be equity movements, not operating expense.
+- Hardware may belong in capex rather than operating expense.
+- Tax payments may require separate treatment from operating expenses.
+
 ## Reading the books
 
 To answer any financial question, first load context:

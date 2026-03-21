@@ -4,6 +4,7 @@ import { flags, periodFromArgs, positional } from "../cli-helpers.js";
 import { buildConfirmedSet, buildReviewMateriality } from "../review.js";
 import { META_TYPES } from "../event-types.js";
 import { sortByTimestamp } from "../reporting.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 function visibleReviewItems(args: string[], ledgerPath: string): {
   items: LedgerEvent[];
@@ -92,6 +93,8 @@ function visibleReviewItems(args: string[], ledgerPath: string): {
 }
 
 export function cmdReview(args: string[], ledgerPath: string) {
+  const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const p = positional(args);
   const f = flags(args);
   if (p[0] === "batch") {
@@ -110,6 +113,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
     if (items.length === 0) {
       console.log(JSON.stringify({
         command: "review batch",
+        workflow,
         status: "empty",
         action,
         out_path: outPath,
@@ -157,6 +161,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
     }
     console.log(JSON.stringify({
       command: "review batch",
+      workflow,
       status: "ok",
       action,
       out_path: outPath,
@@ -229,6 +234,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
     : "clawbooks review batch --out review-actions.jsonl --action confirm --confidence inferred";
 
   console.log(JSON.stringify({
+    workflow,
     needs_review,
     filters,
     resolved_scope: {

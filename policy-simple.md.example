@@ -1,5 +1,25 @@
 # Accounting policy
 
+# AGENT CONTRACT
+
+Before classifying transactions or generating reports for these books:
+
+1. Read `.books/program.md`
+2. Read this entire `policy.md`
+3. Inspect the source documents
+4. Mark unsupported classifications as `inferred` or `unclear`
+5. Do not present heuristic classifications as final accounting treatment
+
+Important guardrails:
+
+- Do not assume bank inflows are income without policy support.
+- Do not assume transfers are revenue.
+- Do not assume owner movements are operating expenses.
+- Do not assume hardware purchases are opex rather than capex.
+- Do not assume tax-related movements are operating expenses unless policy says so.
+
+If the source data is insufficient to support a treatment, say so explicitly.
+
 ## Structured policy hints
 
 ```yaml

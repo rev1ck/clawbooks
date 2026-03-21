@@ -5,6 +5,7 @@ import { latestSnapshot, readAll } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
 import { CLI_VERSION } from "../version.js";
+import { buildWorkflowStatus } from "../workflow-state.js";
 import { analyzeVerification } from "./verify.js";
 
 export function cmdDoctor(params: {
@@ -24,6 +25,7 @@ export function cmdDoctor(params: {
   const canRead = ledgerExists;
   const canWrite = booksExist || params.booksDir !== null || params.resolution === "env:file" || params.resolution === "cwd:bare";
   const hasSupportFiles = support.exists.program && support.exists.agent_bootstrap && support.exists.event_schema;
+  const workflow = buildWorkflowStatus({ booksDir: params.booksDir, policyPath: params.policyPath });
   const all = ledgerExists ? readAll(params.ledgerPath) : [];
   const verification = ledgerExists ? analyzeVerification(all) : null;
   const nonMetaEvents = all.filter((e) => !META_TYPES.has(e.type));
@@ -104,6 +106,7 @@ export function cmdDoctor(params: {
       can_write_books: canWrite,
       support_files_present: hasSupportFiles,
     },
+    workflow,
     ledger_health: !ledgerExists ? {
       present: false,
     } : {
@@ -168,6 +171,9 @@ export function cmdDoctor(params: {
     suggested_next_command: "clawbooks quickstart",
     notes: [
       "Use `clawbooks quickstart` for workflow guidance, core file roles, and reporting capabilities.",
+      workflow.reporting_readiness === "ready"
+        ? "Workflow acknowledgment is current for program.md and policy.md."
+        : "Workflow acknowledgment is missing or stale. Next best command: `clawbooks workflow ack --program --policy`.",
       support.exists.event_schema
         ? "Schema reference present: event-schema.md is packaged and available."
         : "Schema reference missing: event-schema.md was not found in package support files.",

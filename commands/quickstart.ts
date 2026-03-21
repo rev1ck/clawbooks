@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { availablePolicyExamples, packageSupportFiles, resolveProgramPath } from "../books.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
+import { buildWorkflowStatus } from "../workflow-state.js";
 
 export function cmdQuickstart(params: {
   booksDir: string | null;
@@ -17,6 +18,7 @@ export function cmdQuickstart(params: {
   const policy = policyText(params.policyPath);
   const policyReadiness = classifyPolicyReadiness(policy, params.policyPath);
   const lint = lintPolicyText(policy, params.policyPath);
+  const workflow = buildWorkflowStatus({ booksDir: params.booksDir, policyPath: params.policyPath });
 
   console.log(JSON.stringify({
     command: "quickstart",
@@ -67,16 +69,18 @@ export function cmdQuickstart(params: {
       },
       available_examples: availablePolicyExamples(),
     },
+    workflow_status: workflow,
     first_run: [
       "Run `clawbooks quickstart` when entering an unfamiliar repository or books directory.",
-      "Read program.md.",
-      "Read policy.md.",
+      "Read .books/program.md.",
+      "Read .books/policy.md.",
       "Read event-schema.md if you are importing or revising event shapes.",
+      "Inspect the raw source documents.",
       "Use `clawbooks import scaffold <kind>` if you want a mapper template before writing import code.",
       "Prefer importing full source coverage when practical; cut periods later for reporting and checks.",
       "For statement-shaped imports, run `clawbooks import check ... --statement ... --save-session` before append.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
-      "Run `clawbooks verify` and `clawbooks reconcile` after imports when source totals are available.",
+      "Run `clawbooks verify`, `clawbooks review`, and `clawbooks summary` after imports.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
     ],
     workflow: {
@@ -145,6 +149,7 @@ export function cmdQuickstart(params: {
       "Tighten policy.md before producing year-end or externally shared outputs.",
     ] : [
       "Read program.md and the policy path shown above before reporting.",
+      "Record workflow acknowledgment with `clawbooks workflow ack --program --policy` after reading those files.",
       "Use the policy file above as the authority for basis, recognition, categorization, and review rules.",
       "Use the event schema path above when adding new event shapes or upgrading import conventions.",
       "Run `clawbooks doctor` when you want mechanical setup diagnostics rather than workflow guidance.",

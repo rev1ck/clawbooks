@@ -4,10 +4,13 @@ import { sortByTimestamp, buildReportingSections, round2 } from "../reporting.js
 import { buildReclassifyMap, buildReviewMateriality, buildCorrectionSummary } from "../review.js";
 import { buildDocumentSettlementData } from "../documents.js";
 import { META_TYPES } from "../event-types.js";
+import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdSummary(args: string[], ledgerPath: string) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
+  const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const all = readAll(ledgerPath);
   const events = sortByTimestamp(filter(all, { after, before, source: f.source }));
   const nonMetaEvents = events.filter((e) => !META_TYPES.has(e.type));
@@ -62,6 +65,7 @@ export function cmdSummary(args: string[], ledgerPath: string) {
   }
 
   console.log(JSON.stringify({
+    workflow,
     requested_scope: {
       after: after ?? null,
       before: before ?? null,

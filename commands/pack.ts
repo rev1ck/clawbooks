@@ -8,6 +8,7 @@ import { INFLOW_TYPES, META_TYPES, OUTFLOW_TYPES } from "../event-types.js";
 import { buildCorrectionSummary, buildReclassifyMap, buildReviewMateriality } from "../review.js";
 import { buildDocumentSettlementData } from "../documents.js";
 import { buildReportingSections, round2, sortByTimestamp } from "../reporting.js";
+import { buildWorkflowStatus } from "../workflow-state.js";
 
 function csvEscape(val: string): string {
   if (val.includes(",") || val.includes('"') || val.includes("\n")) {
@@ -25,6 +26,7 @@ type PackParams = {
 export function cmdPack(args: string[], params: PackParams) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
+  const workflow = buildWorkflowStatus({ booksDir: params.booksDir ?? null, policyPath: params.policyPath });
   const packBase = params.booksDir ?? ".";
   const outDir = f.out ?? join(packBase, `audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`);
   const all = readAll(params.ledgerPath);
@@ -93,6 +95,7 @@ export function cmdPack(args: string[], params: PackParams) {
   }
 
   writeFileSync(`${outDir}/summary.json`, JSON.stringify({
+    workflow,
     period: { after: after ?? "all", before: before ?? "now" },
     by_type: byType,
     by_category: byCategory,
@@ -191,6 +194,7 @@ export function cmdPack(args: string[], params: PackParams) {
     }
   }
   writeFileSync(`${outDir}/verify.json`, JSON.stringify({
+    workflow,
     event_count: events.length,
     debits,
     credits,
@@ -237,9 +241,12 @@ export function cmdPack(args: string[], params: PackParams) {
   if (confirmEvents.length > 0) files.push("confirmations.csv");
   if (capitalizedEvents.length > 0) files.push("asset_register.csv");
   if (existsSync(params.policyPath)) files.push("policy.md");
+  writeFileSync(`${outDir}/workflow.json`, JSON.stringify(workflow, null, 2) + "\n", "utf-8");
+  files.push("workflow.json");
 
   console.log(JSON.stringify({
     pack: outDir,
+    workflow,
     period: { after: after ?? "all", before: before ?? "now" },
     events: events.length,
     files,

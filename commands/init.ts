@@ -68,6 +68,14 @@ export function cmdInit(args: string[], params: InitParams) {
   console.log("Treat the seeded example as a starting point, then tailor it to your preferences.");
   console.log("Next agent step: run `clawbooks quickstart` for workflow guidance, then `clawbooks doctor` for diagnostics.");
   console.log();
+  console.log("Workflow reminder for agents:");
+  console.log("1. Read .books/program.md");
+  console.log("2. Read .books/policy.md");
+  console.log("3. Inspect the source documents");
+  console.log("4. Import normalized events");
+  console.log("5. Run verify + review + summary");
+  console.log("Reports generated before reading program.md and policy.md should be treated as heuristic and provisional.");
+  console.log();
   console.log("Recommended .gitignore additions:");
   console.log(`  ${dir.startsWith("/") ? dir : dir.replace(/^\.\//, "")}/ledger*.jsonl`);
   console.log(`  ${dir.startsWith("/") ? dir : dir.replace(/^\.\//, "")}/audit-pack-*`);
