@@ -104,11 +104,10 @@ P&L / balance sheet / cash flow / tax views / audit outputs
 Install:
 
 ```bash
-npm install -g clawbooks
+npm install -g clawbooks@latest
+clawbooks version
 clawbooks --help
 ```
-
-Current version target: `0.2.2`
 
 Bootstrap:
 
