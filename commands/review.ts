@@ -97,6 +97,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
   const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const p = positional(args);
   const f = flags(args);
+  const allowProvisional = f["allow-provisional"] === "true";
   if (p[0] === "batch") {
     const nestedArgs = args.filter((arg, index) => !(index === 0 && arg === "batch"));
     const outPath = f.out;
@@ -117,6 +118,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
         reporting_mode: workflow.reporting_mode,
         classification_basis: workflow.classification_basis,
         workflow_warning: workflow.warning,
+        provisional_override: allowProvisional,
         status: "empty",
         action,
         out_path: outPath,
@@ -168,6 +170,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
       reporting_mode: workflow.reporting_mode,
       classification_basis: workflow.classification_basis,
       workflow_warning: workflow.warning,
+      provisional_override: allowProvisional,
       status: "ok",
       action,
       out_path: outPath,
@@ -244,6 +247,7 @@ export function cmdReview(args: string[], ledgerPath: string) {
     reporting_mode: workflow.reporting_mode,
     classification_basis: workflow.classification_basis,
     workflow_warning: workflow.warning,
+    provisional_override: allowProvisional,
     needs_review,
     filters,
     resolved_scope: {

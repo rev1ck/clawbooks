@@ -16,6 +16,7 @@ export function cmdContext(args: string[], params: ContextParams) {
   const all = readAll(params.ledgerPath);
   const verbose = f.verbose === "true";
   const includePolicy = f["include-policy"] === "true";
+  const allowProvisional = f["allow-provisional"] === "true";
   const workflowPaths = inferWorkflowPaths(params.ledgerPath);
   const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: params.policyPath });
 
@@ -51,6 +52,7 @@ export function cmdContext(args: string[], params: ContextParams) {
     event_types: summary.event_types,
     currencies: summary.currencies,
     workflow,
+    provisional_override: allowProvisional,
   };
 
   console.log(`<context schema="clawbooks.context.v2">`);
@@ -63,6 +65,9 @@ export function cmdContext(args: string[], params: ContextParams) {
   console.log(`Read the policy first.`);
   if (workflow.reporting_readiness !== "ready" && workflow.warning) {
     console.log(`Workflow warning: ${workflow.warning}`);
+    if (!allowProvisional) {
+      console.log(`This context is provisional. Re-run with --allow-provisional if you intentionally want exploratory output before policy acknowledgment.`);
+    }
   }
   console.log(`Use the policy path in metadata or run \`clawbooks policy\` to inspect the full policy text.`);
   if (snapshot) {

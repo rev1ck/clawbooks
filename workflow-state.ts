@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { resolveProgramPath } from "./books.js";
+import { latestImportSession } from "./import-sessions.js";
 
 export type WorkflowAckFile = {
   current: {
@@ -72,6 +73,7 @@ export function buildWorkflowStatus(params: {
   const programAckStale = Boolean(current?.program && current.program.sha256 !== programHash);
   const policyAckStale = Boolean(current?.policy && current.policy.sha256 !== policyHash);
 
+  const latestSession = latestImportSession(params.booksDir);
   let reportingReadiness: "blocked" | "caution" | "ready" = "ready";
   if (!program.exists || !existsSync(params.policyPath)) {
     reportingReadiness = "blocked";
@@ -79,9 +81,12 @@ export function buildWorkflowStatus(params: {
     reportingReadiness = "caution";
   }
 
-  const classificationBasis = reportingReadiness === "ready"
+  let classificationBasis = reportingReadiness === "ready"
     ? (current?.classification_basis ?? "policy_guided")
     : "unknown";
+  if (latestSession?.classification_basis) {
+    classificationBasis = latestSession.classification_basis;
+  }
 
   const warning = reportingReadiness === "ready"
     ? null
@@ -131,6 +136,17 @@ export function buildWorkflowStatus(params: {
       operator: current?.operator ?? null,
       source_docs: current?.source_docs ?? [],
     },
+    latest_import_session: latestSession ? {
+      import_session: latestSession.import_session,
+      created_at: latestSession.created_at,
+      status: latestSession.status,
+      workflow_state: latestSession.workflow_state,
+      reporting_mode: latestSession.reporting_mode ?? null,
+      classification_basis: latestSession.classification_basis ?? null,
+      workflow_acknowledged: latestSession.workflow_acknowledged ?? null,
+      issue_count: latestSession.issue_count ?? null,
+      path: latestSession.path,
+    } : null,
     workflow_state:
       reportingReadiness === "ready"
         ? "policy_acknowledged"

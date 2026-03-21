@@ -327,7 +327,7 @@ grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import 
 grep -q '"what_matters"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should include operator-facing summary text"; exit 1; }
 grep -q '"source_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report source coverage"; exit 1; }
 grep -q '"reporting_mode": "provisional"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should mark unacknowledged runs provisional"; exit 1; }
-grep -q '"classification_basis": "unknown"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should surface unknown classification basis before workflow ack"; exit 1; }
+grep -q '"classification_basis": "heuristic_pattern"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should surface heuristic classification basis when mapper hints are in use"; exit 1; }
 test -f "$IMPORT_ROOT/.books/imports/sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
 
 IMPORT_SESSIONS_LIST="$IMPORT_ROOT/import-sessions-list.json"
@@ -515,7 +515,9 @@ DOCTOR_DOCS="$DOCS_ROOT/doctor.json"
 grep -q '"readiness": "starter"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report starter policy readiness"; exit 1; }
 grep -q '"provisional_outputs": true' "$DOCTOR_DOCS" || { echo "FAIL: doctor should mark starter policy outputs as provisional"; exit 1; }
 grep -q '"policy_path": ".*/.books/policy.md"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should include resolved policy path"; exit 1; }
-grep -q '"suggested_next_command": "clawbooks quickstart"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should direct agents to quickstart"; exit 1; }
+grep -q '"suggested_next_command": "clawbooks workflow ack --program --policy"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should direct agents to workflow acknowledgment when books exist but are unacknowledged"; exit 1; }
+grep -q '"review_queue"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should include review queue diagnostics"; exit 1; }
+grep -q '"readiness_reasons"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should explain derived reporting readiness"; exit 1; }
 grep -q '"chain_valid": false' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report broken ledger chains"; exit 1; }
 grep -q '"status": "none"' "$DOCTOR_DOCS" || { echo "FAIL: doctor should report missing snapshots"; exit 1; }
 grep -q 'No opening_balance or snapshot events found' "$DOCTOR_DOCS" || { echo "FAIL: doctor should warn when opening balances and snapshots are missing"; exit 1; }

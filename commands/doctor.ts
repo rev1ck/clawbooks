@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { availablePolicyExamples, packageSupportFiles, resolveProgramPath } from "../books.js";
 import { latestSnapshot, readAll } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
+import { latestImportSession } from "../import-sessions.js";
 import { classifyPolicyReadiness, lintPolicyText, policyText } from "../policy.js";
+import { buildReviewMateriality } from "../review.js";
 import { CLI_VERSION } from "../version.js";
 import { buildWorkflowStatus } from "../workflow-state.js";
 import { analyzeVerification } from "./verify.js";
@@ -39,8 +41,17 @@ export function cmdDoctor(params: {
   const duplicateGroups = verification?.potential_duplicates?.length ?? 0;
   const chainValid = verification?.chain_valid ?? null;
   const issueCount = verification?.issues.length ?? 0;
+  const latestSession = latestImportSession(params.booksDir);
   const importSessionsDir = params.booksDir ? resolve(params.booksDir, "imports", "sessions") : null;
   const importsDir = params.booksDir ? resolve(params.booksDir, "imports") : null;
+  const reviewMateriality = buildReviewMateriality(nonMetaEvents, all);
+  const reviewQueueCount = reviewMateriality.by_confidence.unclear.count
+    + reviewMateriality.by_confidence.inferred.count
+    + reviewMateriality.by_confidence.unset.count;
+  const reviewQueueMagnitude = reviewMateriality.by_confidence.unclear.magnitude
+    + reviewMateriality.by_confidence.inferred.magnitude
+    + reviewMateriality.by_confidence.unset.magnitude;
+  const materiallyLargeReviewQueue = reviewQueueCount >= 3 || reviewQueueMagnitude >= 1000 || reviewMateriality.by_confidence.unclear.count > 0;
 
   let snapshotStatus = "none";
   let snapshotReason = "No snapshot events found in the ledger.";
@@ -79,6 +90,57 @@ export function cmdDoctor(params: {
   if (snapshotStatus === "stale") {
     operatorWarnings.push("Snapshot is stale relative to the latest ledger activity.");
   }
+  if (latestSession && latestSession.status !== "ok") {
+    operatorWarnings.push("Latest saved import session is not clean. Re-run `clawbooks import check` before relying on reporting.");
+  }
+  if (nonMetaEvents.length > 0 && !latestSession) {
+    operatorWarnings.push("No saved import session was found. Reporting can proceed, but import validation history is missing.");
+  }
+  if (materiallyLargeReviewQueue) {
+    operatorWarnings.push("Review queue is materially open. Confirm or reclassify high-impact inferred items before final reporting.");
+  }
+
+  let reportingReadiness: "blocked" | "caution" | "ready" = workflow.reporting_readiness;
+  const readinessReasons: string[] = [];
+  if (workflow.reporting_readiness === "blocked") {
+    readinessReasons.push("program.md or policy.md is missing.");
+  }
+  if (workflow.reporting_readiness !== "blocked" && workflow.reporting_readiness !== "ready") {
+    readinessReasons.push("program.md and policy.md are not acknowledged for the current run.");
+  }
+  if (policyReadiness.provisional) {
+    reportingReadiness = "caution";
+    readinessReasons.push("policy.md is still starter/provisional.");
+  }
+  if (issueCount > 0 || chainValid === false) {
+    reportingReadiness = "caution";
+    readinessReasons.push("ledger verification reports open integrity issues.");
+  }
+  if (nonMetaEvents.length > 0 && !latestSession) {
+    reportingReadiness = "caution";
+    readinessReasons.push("no saved import-check session is available for current data.");
+  }
+  if (latestSession && (latestSession.status !== "ok" || latestSession.workflow_acknowledged === false)) {
+    reportingReadiness = "caution";
+    readinessReasons.push("latest import session is mismatched or was saved without workflow acknowledgment.");
+  }
+  if (materiallyLargeReviewQueue) {
+    reportingReadiness = "caution";
+    readinessReasons.push("review queue still contains material unresolved items.");
+  }
+  const effectiveClassificationBasis = latestSession?.classification_basis ?? workflow.classification_basis;
+  const effectiveReportingMode = reportingReadiness === "ready" && String(effectiveClassificationBasis).startsWith("policy_")
+    ? "policy_grounded"
+    : "provisional";
+  const suggestedNextCommand = !ledgerExists && !policyExists
+    ? "clawbooks quickstart"
+    : workflow.reporting_readiness !== "ready"
+    ? "clawbooks workflow ack --program --policy"
+    : !latestSession || latestSession.status !== "ok"
+      ? "clawbooks import check ... --save-session"
+      : materiallyLargeReviewQueue
+        ? "clawbooks review"
+        : "clawbooks summary";
 
   console.log(JSON.stringify({
     command: "doctor",
@@ -106,7 +168,13 @@ export function cmdDoctor(params: {
       can_write_books: canWrite,
       support_files_present: hasSupportFiles,
     },
-    workflow,
+    workflow: {
+      ...workflow,
+      reporting_readiness: reportingReadiness,
+      reporting_mode: effectiveReportingMode,
+      classification_basis: effectiveClassificationBasis,
+      readiness_reasons: readinessReasons,
+    },
     ledger_health: !ledgerExists ? {
       present: false,
     } : {
@@ -157,6 +225,7 @@ export function cmdDoctor(params: {
       import_workflow: {
         import_scaffolds_dir: importsDir,
         import_sessions_dir: importSessionsDir,
+        latest_session: latestSession,
         recommendations: [
           "Use `clawbooks import scaffold <kind>` when starting a new importer.",
           "Use `clawbooks import check ... --statement ... --save-session` before appending staged statement imports.",
@@ -167,8 +236,13 @@ export function cmdDoctor(params: {
           "Keep vendor mappings near the scaffold or in .books/vendor-mappings.json so import check can discover them.",
         ],
       },
+      review_queue: {
+        count: reviewQueueCount,
+        materially_large: materiallyLargeReviewQueue,
+        materiality: reviewMateriality,
+      },
     },
-    suggested_next_command: "clawbooks quickstart",
+    suggested_next_command: suggestedNextCommand,
     notes: [
       "Use `clawbooks quickstart` for workflow guidance, core file roles, and reporting capabilities.",
       workflow.reporting_readiness === "ready"

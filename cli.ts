@@ -304,7 +304,7 @@ Build a statement reconciliation artifact that compares the staged import, curre
 Examples:
   clawbooks import reconcile staged.jsonl --statement statement-profile.json
   clawbooks import reconcile staged.jsonl --statement statement-profile.json --out reconcile-artifact.json`,
-    review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type]
+    review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type] [--allow-provisional]
 
 Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.
 Review echoes the resolved scope and the next best command for working the queue.
@@ -319,7 +319,7 @@ Generate append-only JSONL review actions for the visible queue. Inspect the fil
 Examples:
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
   clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software`,
-    summary: `Usage: clawbooks summary [period] [flags]
+    summary: `Usage: clawbooks summary [period] [flags] [--allow-provisional]
 
 Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
 
@@ -361,7 +361,7 @@ Show setup diagnostics, policy readiness, and operator warnings.
 
 Example:
   clawbooks doctor`,
-    context: `Usage: clawbooks context [period] [--include-policy] [--verbose]
+    context: `Usage: clawbooks context [period] [--include-policy] [--verbose] [--allow-provisional]
 
 Print policy-aware context for reasoning and reporting.
 

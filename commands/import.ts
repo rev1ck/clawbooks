@@ -5,7 +5,7 @@ import { round2, sortByTimestamp } from "../reporting.js";
 import { filterByDateBasis, type DateBasis } from "../imports.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
-import { buildWorkflowStatus, resolveWorkflowStatePath } from "../workflow-state.js";
+import { buildWorkflowStatus } from "../workflow-state.js";
 
 type ImportParams = {
   booksDir: string | null;
@@ -1085,10 +1085,9 @@ export function cmdImport(args: string[], params: ImportParams) {
   const p = positional(args);
   const workflow = buildWorkflowStatus({
     booksDir: params.booksDir,
-    policyPath: resolveWorkflowStatePath(params.booksDir, dirname(params.ledgerPath)).endsWith("workflow-state.json")
-      ? join(dirname(resolve(params.ledgerPath)), "policy.md")
-      : join(dirname(resolve(params.ledgerPath)), "policy.md"),
+    policyPath: join(dirname(resolve(params.ledgerPath)), "policy.md"),
   });
+  const validClassificationBases = new Set(["policy_explicit", "policy_guided", "heuristic_pattern", "manual_operator", "mixed", "unknown"]);
 
   if (p[0] === "sessions") {
     const action = p[1] ?? "list";
@@ -1492,12 +1491,27 @@ export function cmdImport(args: string[], params: ImportParams) {
     const sourceShapeHint = statementStart || statementEnd || profile.opening_balance !== undefined || profile.closing_balance !== undefined
       ? "statement_like"
       : "generic_event_export";
+    const classificationBasis = f["classification-basis"]
+      ?? (workflow.reporting_readiness === "ready"
+        ? "policy_guided"
+        : f.mapper || loadedMappings.path
+          ? "heuristic_pattern"
+          : f["recorded-by"]
+            ? "manual_operator"
+            : "unknown");
+    if (!validClassificationBases.has(classificationBasis)) {
+      console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
+      process.exit(1);
+    }
+    const reportingMode = workflow.reporting_readiness === "ready" && classificationBasis.startsWith("policy_")
+      ? "policy_grounded"
+      : "provisional";
 
     console.log(JSON.stringify({
       command: "import check",
       workflow,
-      reporting_mode: workflow.reporting_mode,
-      classification_basis: workflow.classification_basis,
+      reporting_mode: reportingMode,
+      classification_basis: classificationBasis,
       workflow_warning: workflow.warning,
       input_path: resolve(inputPath),
       statement_profile_path: f.statement ? resolve(f.statement) : null,
@@ -1566,8 +1580,8 @@ export function cmdImport(args: string[], params: ImportParams) {
         input_path: resolve(inputPath),
         statement_profile_path: f.statement ? resolve(f.statement) : null,
         status: issues.length === 0 ? "ok" : "mismatch",
-        reporting_mode: workflow.reporting_mode,
-        classification_basis: workflow.classification_basis,
+        reporting_mode: reportingMode,
+        classification_basis: classificationBasis,
         workflow_acknowledged: workflow.reporting_readiness === "ready",
         workflow_state_path: workflow.state_path,
         program_path: workflow.program.path,

@@ -9,8 +9,14 @@ export function cmdWorkflow(args: string[], params: {
   const p = positional(args);
   const f = flags(args);
   const subcommand = p[0] ?? "status";
+  const validClassificationBases = new Set(["policy_explicit", "policy_guided", "heuristic_pattern", "manual_operator", "mixed", "unknown"]);
 
   if (subcommand === "ack") {
+    const classificationBasis = f["classification-basis"] ?? "policy_guided";
+    if (!validClassificationBases.has(classificationBasis)) {
+      console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
+      process.exit(1);
+    }
     const program = resolveProgramPath(params.booksDir);
     const statePath = resolveWorkflowStatePath(params.booksDir, params.policyPath);
     const existing = readWorkflowState(statePath);
@@ -29,7 +35,7 @@ export function cmdWorkflow(args: string[], params: {
       } : existing?.current?.policy ?? null,
       agent: f.agent ?? null,
       operator: f.operator ?? null,
-      classification_basis: "policy_guided",
+      classification_basis: classificationBasis,
       source_docs: f["source-docs"] ? f["source-docs"].split(",").map((value) => value.trim()).filter(Boolean) : [],
     };
 
@@ -61,6 +67,6 @@ export function cmdWorkflow(args: string[], params: {
     return;
   }
 
-  console.error("Usage: clawbooks workflow [status|ack] [--program] [--policy] [--agent NAME] [--operator NAME] [--source-docs a,b,c]");
+  console.error("Usage: clawbooks workflow [status|ack] [--program] [--policy] [--agent NAME] [--operator NAME] [--classification-basis BASIS] [--source-docs a,b,c]");
   process.exit(1);
 }
