@@ -72,14 +72,17 @@ Mental model:
   The agent reads policy.md to learn how the current books should be accounted for.
   The agent reads event-schema.md to learn the canonical event envelope.
   The ledger stores facts. The agent does the accounting.
+  Outputs are either policy_grounded or provisional.
+  Provisional runs are exploratory; they should not be presented as final accounting.
 
 First run:
   1. clawbooks quickstart
   2. Read program.md
   3. Read policy.md
-  4. Import normalized events with record/batch
-  5. Run verify + reconcile
-  6. Use summary, context, documents, assets, and pack to produce reports, checks, and audit-ready outputs
+  4. clawbooks workflow ack --program --policy
+  5. Import normalized events with record/batch
+  6. Run verify + reconcile
+  7. Use summary, context, documents, assets, and pack to produce reports, checks, and audit-ready outputs
 
 Setup:
   init        [--books DIR] [--example NAME]
@@ -137,12 +140,15 @@ Important terms:
   policy.md    Accounting policy for the current books
   event-schema.md Canonical event envelope and schema evolution reference
   ledger.jsonl Append-only financial record
+  policy_grounded Output produced after current-run workflow grounding
+  provisional  Exploratory output produced without full workflow grounding
   snapshot     Saved derived checkpoint in the ledger; not the source of truth
 
 Quick examples:
   clawbooks quickstart
   clawbooks doctor
   clawbooks workflow ack --program --policy
+  clawbooks workflow ack --program --policy --classification-basis policy_explicit
   clawbooks workflow status
   clawbooks version
   clawbooks version --latest
@@ -162,6 +168,7 @@ Quick examples:
   clawbooks context 2026-03 --include-policy
   clawbooks verify 2026-03 --balance 153869.05 --currency USD
   clawbooks pack 2026-03 --out ./march-pack
+  clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 
 Outcome surface:
   Use clawbooks to build P&L, balance sheet, cash flow, receivable/payable views,
@@ -204,11 +211,18 @@ Review flags:
   --min-magnitude <N>         Only show items whose absolute amount is at least N
   --limit <N>                 Limit the number of returned review items
   --group-by <field>          category, source, or type
+  --allow-provisional         Acknowledge that the run is exploratory rather than policy-grounded
   --out <PATH>                Output path for review batch
   --action <kind>             confirm or reclassify for review batch
   --confirmed-by <NAME>       Confirmer label for bulk confirm files
   --notes <TEXT>              Notes for bulk confirm files
   --new-category <CAT>        Target category for bulk reclassify files
+
+Workflow flags:
+  --classification-basis <kind>
+                              policy_explicit, policy_guided, heuristic_pattern,
+                              manual_operator, mixed, or unknown
+  --allow-provisional         Explicitly allow exploratory output where supported
 
 Import check notes:
   --statement <file>          Load a statement-profile JSON with explicit expectations
@@ -266,10 +280,12 @@ Emit editable mapper templates. For statement-csv, clawbooks also emits:
   - statement-profile.json
   - vendor-mappings.json
 
+Scaffold output also reports whether the current run is policy_grounded or provisional.
+
 Examples:
   clawbooks import scaffold statement-csv
   clawbooks import scaffold generic-csv --out ./imports/generic`,
-    "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID]
+    "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID] [--classification-basis BASIS]
 
 Validate staged JSONL before append. --statement loads explicit expectations such as:
   - period coverage
@@ -278,11 +294,13 @@ Validate staged JSONL before append. --statement loads explicit expectations suc
   - date basis
 
 If a vendor mappings file is present, import check surfaces coverage and consistency signals.
+Saved import sessions capture grounding state such as classification_basis, program_hash, policy_hash, and workflow acknowledgment.
 Import full source coverage when practical, then cut periods later in summary/verify/review.
 
 Examples:
   clawbooks import check staged.jsonl --statement statement-profile.json
-  clawbooks import check staged.jsonl --statement statement-profile.json --save-session`,
+  clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+  clawbooks import check staged.jsonl --statement statement-profile.json --classification-basis heuristic_pattern`,
     "import-mappings": `Usage: clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]
 
 Work with optional vendor-mappings.json files as factual recurring-description hints.
@@ -308,6 +326,7 @@ Examples:
 
 Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.
 Review echoes the resolved scope and the next best command for working the queue.
+Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
 Examples:
   clawbooks review 2026-03
@@ -322,6 +341,7 @@ Examples:
     summary: `Usage: clawbooks summary [period] [flags] [--allow-provisional]
 
 Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
+Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
 Examples:
   clawbooks summary 2026-03
@@ -351,23 +371,47 @@ Examples:
   clawbooks verify 2026-03 --balance 900 --opening-balance 1000 --currency USD`,
     quickstart: `Usage: clawbooks quickstart
 
-Explain the operating model, resolved core files, and recommended first-run workflow.
+Explain the operating model, resolved core files, workflow state, and recommended first-run workflow.
 
 Example:
   clawbooks quickstart`,
+    workflow: `Usage: clawbooks workflow [status|ack] [--program] [--policy] [--agent NAME] [--operator NAME] [--classification-basis BASIS] [--source-docs a,b,c]
+
+Record or inspect workflow acknowledgment state for the current run.
+Use workflow ack after reading program.md and policy.md.
+
+Examples:
+  clawbooks workflow status
+  clawbooks workflow ack --program --policy
+  clawbooks workflow ack --program --policy --classification-basis policy_explicit`,
     doctor: `Usage: clawbooks doctor
 
-Show setup diagnostics, policy readiness, and operator warnings.
+Show setup diagnostics, policy readiness, import/review readiness, and operator warnings.
 
 Example:
   clawbooks doctor`,
     context: `Usage: clawbooks context [period] [--include-policy] [--verbose] [--allow-provisional]
 
 Print policy-aware context for reasoning and reporting.
+Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
 Examples:
   clawbooks context 2026-03
   clawbooks context 2026-03 --include-policy`,
+    record: `Usage: clawbooks record '<json>' [--classification-basis BASIS] [--allow-provisional]
+
+Append one event to the ledger and surface the run-level grounding state.
+
+Examples:
+  clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
+  clawbooks record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD"}}' --classification-basis manual_operator`,
+    batch: `Usage: clawbooks batch [--classification-basis BASIS] [--allow-provisional]
+
+Append JSONL events from stdin and surface the run-level grounding state.
+
+Examples:
+  cat events.jsonl | clawbooks batch
+  cat events.jsonl | clawbooks batch --classification-basis manual_operator`,
     documents: `Usage: clawbooks documents [period] [--as-of ISO_DATE]
 
 Show neutral settlement, aging, and document status views.
@@ -420,7 +464,7 @@ if (cmd === "workflow") {
 switch (cmd) {
   case "init":      cmdInit(args, { booksFlag }); break;
   case "record":    cmdRecord(args, LEDGER); break;
-  case "batch":     cmdBatch(await stdin(), LEDGER); break;
+  case "batch":     cmdBatch(args, await stdin(), LEDGER); break;
   case "import":    cmdImport(args, { booksDir: BOOKS_DIR, ledgerPath: LEDGER }); break;
   case "log":       cmdLog(args, LEDGER); break;
   case "context":   cmdContext(args, {

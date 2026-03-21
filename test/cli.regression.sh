@@ -287,6 +287,8 @@ IMPORT_ROOT="$(mktemp -d)"
 IMPORT_JSON="$IMPORT_ROOT/import.json"
 (cd "$IMPORT_ROOT" && $CLI import scaffold statement-csv 2>&1) > "$IMPORT_JSON"
 grep -q '"kind": "statement-csv"' "$IMPORT_JSON" || { echo "FAIL: import scaffold should report scaffold kind"; exit 1; }
+grep -q '"workflow"' "$IMPORT_JSON" || { echo "FAIL: import scaffold should expose workflow state"; exit 1; }
+grep -q '"status_line": "Status: PROVISIONAL"' "$IMPORT_JSON" || { echo "FAIL: import scaffold should mark provisional status when workflow is unacknowledged"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL: import scaffold should create README"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: import scaffold should create mapper"; exit 1; }
 test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: import scaffold should create python mapper"; exit 1; }
@@ -403,17 +405,36 @@ BOOKS_STATS="$BOOKS_ROOT/books-stats.json"
 (cd "$BOOKS_ROOT" && $CLI --books .books stats 2>&1) > "$BOOKS_STATS"
 node -e "const s = JSON.parse(require('fs').readFileSync('$BOOKS_STATS','utf8')); if (s.events !== 1) throw new Error('expected 1 event via --books, got ' + s.events)"
 
+RECORD_WRITE_JSON="$BOOKS_ROOT/record-write.json"
+(cd "$BOOKS_ROOT" && $CLI --books .books record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD","description":"write metadata test"}}' 2>&1) > "$RECORD_WRITE_JSON"
+grep -q '"classification_basis"' "$RECORD_WRITE_JSON" || { echo "FAIL: record should surface classification basis"; exit 1; }
+grep -q '"status_line"' "$RECORD_WRITE_JSON" || { echo "FAIL: record should expose a status line"; exit 1; }
+
 # Test 10: CLAWBOOKS_BOOKS env var works
 BOOKS_STATS2="$BOOKS_ROOT/books-stats2.json"
 (cd "$BOOKS_ROOT" && CLAWBOOKS_BOOKS=.books-personal $CLI record '{"source":"test","type":"expense","data":{"amount":50,"currency":"USD"}}' 2>&1) > /dev/null
 (cd "$BOOKS_ROOT" && CLAWBOOKS_BOOKS=.books-personal $CLI stats 2>&1) > "$BOOKS_STATS2"
 node -e "const s = JSON.parse(require('fs').readFileSync('$BOOKS_STATS2','utf8')); if (s.events !== 1) throw new Error('expected 1 event in personal books, got ' + s.events)"
 
+BATCH_DIR="$(mktemp -d)"
+mkdir -p "$BATCH_DIR/.books"
+touch "$BATCH_DIR/.books/ledger.jsonl"
+echo '# test' > "$BATCH_DIR/.books/policy.md"
+echo '# test' > "$BATCH_DIR/.books/program.md"
+cat > "$BATCH_DIR/events.jsonl" <<'EOF'
+{"source":"manual","type":"income","data":{"amount":10,"currency":"USD"}}
+EOF
+BATCH_WRITE_JSON="$BATCH_DIR/batch-write.json"
+(cd "$BATCH_DIR" && $CLI batch --classification-basis manual_operator < events.jsonl 2>&1) > "$BATCH_WRITE_JSON"
+grep -q '"classification_basis":"manual_operator"\|"classification_basis": "manual_operator"' "$BATCH_WRITE_JSON" || { echo "FAIL: batch should accept and surface classification basis"; exit 1; }
+grep -q '"status_line"' "$BATCH_WRITE_JSON" || { echo "FAIL: batch should expose a status line"; exit 1; }
+rm -rf "$BATCH_DIR"
+
 # Test 11: walk-up resolution from subdirectory
 mkdir -p "$BOOKS_ROOT/subdir/nested"
 WALKUP_STATS="$BOOKS_ROOT/walkup-stats.json"
 (cd "$BOOKS_ROOT/subdir/nested" && $CLI stats 2>&1) > "$WALKUP_STATS"
-node -e "const s = JSON.parse(require('fs').readFileSync('$WALKUP_STATS','utf8')); if (s.events !== 1) throw new Error('walk-up should find .books/')"
+node -e "const s = JSON.parse(require('fs').readFileSync('$WALKUP_STATS','utf8')); if (s.events !== 2) throw new Error('walk-up should find .books/')"
 
 # Test 12: backward compat — bare ledger.jsonl still works
 BARE_DIR="$(mktemp -d)"
@@ -543,6 +564,7 @@ SUMMARY_DOCS="$DOCS_ROOT/summary-docs.json"
 (cd "$DOCS_ROOT" && $CLI summary 2026-03 2>&1) > "$SUMMARY_DOCS"
 grep -q '"reporting_mode": "provisional"' "$SUMMARY_DOCS" || { echo "FAIL: summary should mark unacknowledged reporting as provisional"; exit 1; }
 grep -q '"classification_basis": "unknown"' "$SUMMARY_DOCS" || { echo "FAIL: summary should surface unknown classification basis when workflow is unacknowledged"; exit 1; }
+grep -q '"status_line": "Status: PROVISIONAL"' "$SUMMARY_DOCS" || { echo "FAIL: summary should expose provisional status line"; exit 1; }
 grep -q '"settlement_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include settlement_summary"; exit 1; }
 grep -q '"receivable_candidates"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include receivable_candidates"; exit 1; }
 grep -q '"review_materiality"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include review_materiality"; exit 1; }
@@ -554,6 +576,7 @@ grep -q '"coverage"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include cov
 
 CONTEXT_DOCS="$DOCS_ROOT/context-docs.txt"
 (cd "$DOCS_ROOT" && $CLI context 2026-03 2>&1) > "$CONTEXT_DOCS"
+grep -q 'Status: PROVISIONAL' "$CONTEXT_DOCS" || { echo "FAIL: context should print a provisional status line"; exit 1; }
 grep -q '"settlement_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should include settlement_summary"; exit 1; }
 grep -q '"top_open_documents"' "$CONTEXT_DOCS" || { echo "FAIL: context should include top_open_documents"; exit 1; }
 grep -q '"review_materiality"' "$CONTEXT_DOCS" || { echo "FAIL: context should include review_materiality"; exit 1; }
@@ -562,6 +585,7 @@ grep -q '"correction_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should i
 REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 2>&1) > "$REVIEW_DOCS"
 grep -q '"reporting_mode": "provisional"' "$REVIEW_DOCS" || { echo "FAIL: review should mark unacknowledged runs provisional"; exit 1; }
+grep -q '"status_line": "Status: PROVISIONAL"' "$REVIEW_DOCS" || { echo "FAIL: review should expose provisional status line"; exit 1; }
 grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
 grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
 grep -q '"reason_in_queue"' "$REVIEW_DOCS" || { echo "FAIL: review should explain why items are in queue"; exit 1; }

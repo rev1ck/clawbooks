@@ -119,6 +119,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
         classification_basis: workflow.classification_basis,
         workflow_warning: workflow.warning,
         provisional_override: allowProvisional,
+        status_line: workflow.reporting_mode === "policy_grounded"
+          ? "Status: POLICY_GROUNDED"
+          : "Status: PROVISIONAL",
         status: "empty",
         action,
         out_path: outPath,
@@ -171,6 +174,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
       classification_basis: workflow.classification_basis,
       workflow_warning: workflow.warning,
       provisional_override: allowProvisional,
+      status_line: workflow.reporting_mode === "policy_grounded"
+        ? "Status: POLICY_GROUNDED"
+        : "Status: PROVISIONAL",
       status: "ok",
       action,
       out_path: outPath,
@@ -248,6 +254,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
     classification_basis: workflow.classification_basis,
     workflow_warning: workflow.warning,
     provisional_override: allowProvisional,
+    status_line: workflow.reporting_mode === "policy_grounded"
+      ? "Status: POLICY_GROUNDED"
+      : "Status: PROVISIONAL",
     needs_review,
     filters,
     resolved_scope: {

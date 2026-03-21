@@ -71,6 +71,9 @@ export function cmdSummary(args: string[], ledgerPath: string) {
     classification_basis: workflow.classification_basis,
     workflow_warning: workflow.warning,
     provisional_override: allowProvisional,
+    status_line: workflow.reporting_mode === "policy_grounded"
+      ? "Status: POLICY_GROUNDED"
+      : "Status: PROVISIONAL",
     requested_scope: {
       after: after ?? null,
       before: before ?? null,

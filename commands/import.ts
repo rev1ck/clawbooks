@@ -1624,6 +1624,10 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (f["list-scaffolds"] === "true" || f.list === "true") {
     console.log(JSON.stringify({
       command: "import scaffold",
+      workflow,
+      reporting_mode: workflow.reporting_mode,
+      classification_basis: workflow.classification_basis,
+      workflow_warning: workflow.warning,
       scaffolds: [
         { name: "statement-csv", description: "Monthly or bounded statements with opening/closing semantics" },
         { name: "generic-csv", description: "General transaction or event exports without statement semantics" },
@@ -1664,6 +1668,13 @@ export function cmdImport(args: string[], params: ImportParams) {
 
   console.log(JSON.stringify({
     command: "import scaffold",
+    workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
+    status_line: workflow.reporting_mode === "policy_grounded"
+      ? "Status: POLICY_GROUNDED"
+      : "Status: PROVISIONAL",
     kind,
     out_dir: outDir,
     files: fileResults,

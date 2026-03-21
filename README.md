@@ -22,6 +22,11 @@ And one core reference:
 
 The ledger stores facts. The policy states the accounting rules. The agent does the reasoning.
 
+Clawbooks also tracks whether a run is:
+
+- `policy_grounded`: the current run has acknowledged `program.md` and `policy.md`
+- `provisional`: the run is exploratory or heuristic and should not be presented as final accounting
+
 No rules engine. No SDK. No framework.
 
 ## What Clawbooks Is
@@ -68,6 +73,12 @@ Clawbooks is not just for lightweight summaries. The toolchain is intended to su
 - custom period reporting and transaction investigations
 
 The outputs come from combining `summary`, `context`, `documents`, `assets`, `verify`, `reconcile`, and `pack` with the rules in `policy.md`.
+
+Those outputs should be read together with the run state:
+
+- use `clawbooks workflow ack --program --policy` once the agent has read the operating files for the current run
+- expect `policy_grounded` outputs after that acknowledgment
+- treat `provisional` outputs as exploratory and assumption-heavy
 
 ## The Operating Model
 
@@ -124,9 +135,12 @@ Then:
 1. Read `program.md`
 2. Read `.books/policy.md`
 3. Tailor the policy to the entity, jurisdiction, basis, and review rules
-4. Import normalized events with `clawbooks record` or `clawbooks batch`
-5. Run `clawbooks verify` and `clawbooks reconcile`
-6. Use reporting commands to produce the required financial view
+4. Run `clawbooks workflow ack --program --policy`
+5. Import normalized events with `clawbooks record` or `clawbooks batch`
+6. Run `clawbooks verify` and `clawbooks reconcile`
+7. Use reporting commands to produce the required financial view
+
+If you skip the acknowledgment step, reporting remains provisional by design.
 
 ## The Core Files
 
@@ -177,6 +191,9 @@ Bootstrap and setup:
 ```bash
 clawbooks quickstart
 clawbooks doctor
+clawbooks workflow status
+clawbooks workflow ack --program --policy
+clawbooks workflow ack --program --policy --classification-basis policy_explicit
 clawbooks where
 clawbooks init
 clawbooks init --list-examples
@@ -196,16 +213,19 @@ clawbooks import scaffold fills-csv
 clawbooks import scaffold manual-batch
 # edit mapper.mjs or mapper.py, then run it to emit JSONL
 clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import check staged.jsonl --statement statement-profile.json --classification-basis heuristic_pattern
 clawbooks import sessions list
 clawbooks import mappings suggest --source statement_import
 clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
 clawbooks import reconcile staged.jsonl --statement statement-profile.json
 clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
-cat events.jsonl | clawbooks batch
+clawbooks record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD"}}' --classification-basis manual_operator
+cat events.jsonl | clawbooks batch --classification-basis manual_operator
 ```
 
 `import check --save-session` writes an operator sidecar record of the validation run. In a normal books workspace this lives under `.books/imports/sessions/`.
 `import sessions list` and `import sessions show <id|latest>` make those sidecars usable as a first-class operator surface.
+Those import sessions also preserve run-level grounding such as `classification_basis`, `program_hash`, `policy_hash`, and whether workflow acknowledgment was current at the time of validation.
 `import reconcile` produces a dedicated statement reconciliation artifact comparing staged rows, imported ledger rows, and declared statement expectations.
 `import check` also reports the resolved mappings discovery path order. If you do not pass `--mappings`, clawbooks checks the scaffold location and `.books/vendor-mappings.json`.
 When practical, ingest full source coverage first and use periods/ranges later for reporting and checking.
@@ -249,10 +269,12 @@ clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --con
 clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software
 clawbooks assets --as-of 2026-03-31
 clawbooks pack 2026-03 --out ./march-pack
+clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 ```
 
 `review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
 `summary`, `review`, `verify`, and `reconcile` now echo their resolved scope so operators can see the actual time window and filters that were applied.
+`summary`, `context`, and `review` can be run in provisional mode when you explicitly choose exploratory output. `pack` is stricter: it refuses provisional runs unless you pass `--allow-provisional`.
 Period arguments support whole years (`2026`), months (`2026-03`), and explicit ranges (`2026-01/2026-06-30`).
 
 Maintenance:

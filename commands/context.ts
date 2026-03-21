@@ -62,6 +62,7 @@ export function cmdContext(args: string[], params: ContextParams) {
   console.log();
 
   console.log(`<instructions>`);
+  console.log(workflow.reporting_mode === "policy_grounded" ? `Status: POLICY_GROUNDED` : `Status: PROVISIONAL`);
   console.log(`Read the policy first.`);
   if (workflow.reporting_readiness !== "ready" && workflow.warning) {
     console.log(`Workflow warning: ${workflow.warning}`);
