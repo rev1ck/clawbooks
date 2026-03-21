@@ -114,6 +114,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
       console.log(JSON.stringify({
         command: "review batch",
         workflow,
+        reporting_mode: workflow.reporting_mode,
+        classification_basis: workflow.classification_basis,
+        workflow_warning: workflow.warning,
         status: "empty",
         action,
         out_path: outPath,
@@ -162,6 +165,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
     console.log(JSON.stringify({
       command: "review batch",
       workflow,
+      reporting_mode: workflow.reporting_mode,
+      classification_basis: workflow.classification_basis,
+      workflow_warning: workflow.warning,
       status: "ok",
       action,
       out_path: outPath,
@@ -235,6 +241,9 @@ export function cmdReview(args: string[], ledgerPath: string) {
 
   console.log(JSON.stringify({
     workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
     needs_review,
     filters,
     resolved_scope: {

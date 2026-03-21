@@ -80,8 +80,8 @@ export function buildWorkflowStatus(params: {
   }
 
   const classificationBasis = reportingReadiness === "ready"
-    ? (current?.classification_basis ?? "policy_intended")
-    : "unknown_or_heuristic";
+    ? (current?.classification_basis ?? "policy_guided")
+    : "unknown";
 
   const warning = reportingReadiness === "ready"
     ? null
@@ -89,12 +89,29 @@ export function buildWorkflowStatus(params: {
       ? "program.md or policy.md is missing, so reporting is blocked."
       : "program.md and policy.md may not have been reviewed for the current run. Results may be heuristic rather than policy-grounded.";
 
+  const programStatus = !program.exists
+    ? "missing"
+    : programAckStale
+      ? "stale"
+      : programAcknowledged
+        ? "acknowledged"
+        : "unacknowledged";
+
+  const policyStatus = !existsSync(params.policyPath)
+    ? "missing"
+    : policyAckStale
+      ? "stale"
+      : policyAcknowledged
+        ? "acknowledged"
+        : "unacknowledged";
+
   return {
     state_path: workflowStatePath,
     program: {
       path: program.path,
       source: program.source,
       exists: program.exists,
+      status: programStatus,
       sha256: programHash,
       acknowledged: programAcknowledged,
       ack_stale: programAckStale,
@@ -103,6 +120,7 @@ export function buildWorkflowStatus(params: {
     policy: {
       path: params.policyPath,
       exists: existsSync(params.policyPath),
+      status: policyStatus,
       sha256: policyHash,
       acknowledged: policyAcknowledged,
       ack_stale: policyAckStale,
@@ -120,6 +138,7 @@ export function buildWorkflowStatus(params: {
           ? "policy_blocked"
           : "policy_unacknowledged",
     reporting_readiness: reportingReadiness,
+    reporting_mode: reportingReadiness === "ready" ? "policy_grounded" : "provisional",
     classification_basis: classificationBasis,
     warning,
   };

@@ -83,6 +83,12 @@ export function cmdQuickstart(params: {
       "Run `clawbooks verify`, `clawbooks review`, and `clawbooks summary` after imports.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
     ],
+    canonical_agent_prompt: [
+      "Use clawbooks properly.",
+      "Read `.books/program.md` and `.books/policy.md` before importing or reporting.",
+      "Then inspect the source documents, import normalized events, run verify/review/summary, and clearly distinguish policy-backed classifications from inferred ones.",
+      "Do not treat bank inflows, transfers, exchange withdrawals, owner movements, hardware purchases, or tax flows as final P&L classifications unless policy supports that treatment.",
+    ].join(" "),
     workflow: {
       import: [
         "Inspect the source files and normalize them into clawbooks events.",

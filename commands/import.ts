@@ -5,6 +5,7 @@ import { round2, sortByTimestamp } from "../reporting.js";
 import { filterByDateBasis, type DateBasis } from "../imports.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
 import { META_TYPES } from "../event-types.js";
+import { buildWorkflowStatus, resolveWorkflowStatePath } from "../workflow-state.js";
 
 type ImportParams = {
   booksDir: string | null;
@@ -48,6 +49,14 @@ type ImportSessionRecord = {
   statement_profile_path: string | null;
   status: string;
   workflow_state: string;
+  reporting_mode: string;
+  classification_basis: string;
+  workflow_acknowledged: boolean;
+  workflow_state_path: string | null;
+  program_path: string | null;
+  policy_path: string | null;
+  program_hash: string | null;
+  policy_hash: string | null;
   date_basis: string;
   currency: string | null;
   expected: Record<string, number | string>;
@@ -1074,6 +1083,12 @@ for event in batch:
 export function cmdImport(args: string[], params: ImportParams) {
   const f = flags(args);
   const p = positional(args);
+  const workflow = buildWorkflowStatus({
+    booksDir: params.booksDir,
+    policyPath: resolveWorkflowStatePath(params.booksDir, dirname(params.ledgerPath)).endsWith("workflow-state.json")
+      ? join(dirname(resolve(params.ledgerPath)), "policy.md")
+      : join(dirname(resolve(params.ledgerPath)), "policy.md"),
+  });
 
   if (p[0] === "sessions") {
     const action = p[1] ?? "list";
@@ -1093,6 +1108,9 @@ export function cmdImport(args: string[], params: ImportParams) {
           created_at: session.created_at,
           status: session.status,
           workflow_state: session.workflow_state,
+          reporting_mode: session.reporting_mode,
+          classification_basis: session.classification_basis,
+          workflow_acknowledged: session.workflow_acknowledged,
           input_path: session.input_path,
           statement_profile_path: session.statement_profile_path,
           operator_identity: session.operator_identity,
@@ -1477,6 +1495,10 @@ export function cmdImport(args: string[], params: ImportParams) {
 
     console.log(JSON.stringify({
       command: "import check",
+      workflow,
+      reporting_mode: workflow.reporting_mode,
+      classification_basis: workflow.classification_basis,
+      workflow_warning: workflow.warning,
       input_path: resolve(inputPath),
       statement_profile_path: f.statement ? resolve(f.statement) : null,
       statement_profile: Object.keys(profile).length > 0 ? profile : null,
@@ -1544,6 +1566,14 @@ export function cmdImport(args: string[], params: ImportParams) {
         input_path: resolve(inputPath),
         statement_profile_path: f.statement ? resolve(f.statement) : null,
         status: issues.length === 0 ? "ok" : "mismatch",
+        reporting_mode: workflow.reporting_mode,
+        classification_basis: workflow.classification_basis,
+        workflow_acknowledged: workflow.reporting_readiness === "ready",
+        workflow_state_path: workflow.state_path,
+        program_path: workflow.program.path,
+        policy_path: workflow.policy.path,
+        program_hash: workflow.program.sha256,
+        policy_hash: workflow.policy.sha256,
         date_basis: dateBasis,
         currency: currency ?? null,
         workflow_state: issues.length === 0 ? "ready_to_append" : "needs_mapper_or_profile_adjustment",

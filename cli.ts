@@ -374,12 +374,14 @@ Show neutral settlement, aging, and document status views.
 
 Example:
   clawbooks documents 2026-03 --as-of 2026-03-31T00:00:00.000Z`,
-    pack: `Usage: clawbooks pack [period] [--out DIR]
+    pack: `Usage: clawbooks pack [period] [--out DIR] [--allow-provisional]
 
 Generate an audit pack with CSVs, JSON, and the applied policy.
+Pack refuses provisional runs unless you pass --allow-provisional.
 
-Example:
-  clawbooks pack 2026-03 --out ./march-pack`,
+Examples:
+  clawbooks pack 2026-03 --out ./march-pack
+  clawbooks pack 2026-03 --out ./march-pack --allow-provisional`,
   };
 
   return helps[key] ?? null;

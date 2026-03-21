@@ -27,6 +27,12 @@ export function cmdPack(args: string[], params: PackParams) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const workflow = buildWorkflowStatus({ booksDir: params.booksDir ?? null, policyPath: params.policyPath });
+  const allowProvisional = f["allow-provisional"] === "true";
+  if (workflow.reporting_readiness !== "ready" && !allowProvisional) {
+    console.error("Audit pack generation is provisional because program.md and policy.md are not acknowledged for the current run.");
+    console.error("Run `clawbooks workflow ack --program --policy` first, or re-run with `--allow-provisional` if you intentionally want a provisional pack.");
+    process.exit(1);
+  }
   const packBase = params.booksDir ?? ".";
   const outDir = f.out ?? join(packBase, `audit-pack-${(before ?? new Date().toISOString()).slice(0, 10)}`);
   const all = readAll(params.ledgerPath);
@@ -96,6 +102,9 @@ export function cmdPack(args: string[], params: PackParams) {
 
   writeFileSync(`${outDir}/summary.json`, JSON.stringify({
     workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
     period: { after: after ?? "all", before: before ?? "now" },
     by_type: byType,
     by_category: byCategory,
@@ -195,6 +204,9 @@ export function cmdPack(args: string[], params: PackParams) {
   }
   writeFileSync(`${outDir}/verify.json`, JSON.stringify({
     workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
     event_count: events.length,
     debits,
     credits,
@@ -247,6 +259,10 @@ export function cmdPack(args: string[], params: PackParams) {
   console.log(JSON.stringify({
     pack: outDir,
     workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
+    provisional_override: allowProvisional,
     period: { after: after ?? "all", before: before ?? "now" },
     events: events.length,
     files,

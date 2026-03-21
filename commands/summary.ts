@@ -66,6 +66,9 @@ export function cmdSummary(args: string[], ledgerPath: string) {
 
   console.log(JSON.stringify({
     workflow,
+    reporting_mode: workflow.reporting_mode,
+    classification_basis: workflow.classification_basis,
+    workflow_warning: workflow.warning,
     requested_scope: {
       after: after ?? null,
       before: before ?? null,

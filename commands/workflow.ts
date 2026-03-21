@@ -29,7 +29,7 @@ export function cmdWorkflow(args: string[], params: {
       } : existing?.current?.policy ?? null,
       agent: f.agent ?? null,
       operator: f.operator ?? null,
-      classification_basis: "policy_intended",
+      classification_basis: "policy_guided",
       source_docs: f["source-docs"] ? f["source-docs"].split(",").map((value) => value.trim()).filter(Boolean) : [],
     };
 

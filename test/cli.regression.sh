@@ -55,7 +55,7 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js policy -
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js version > "$VERSION_OUT"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js > "$HELP_OUT"
 mkdir -p "$PACK_DIR"
-CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js pack 2026-02 --out "$PACK_DIR" >/dev/null
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js pack 2026-02 --out "$PACK_DIR" --allow-provisional >/dev/null
 
 node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE" "$VERSION_OUT" "$HELP_OUT"
 const fs = require("fs");
@@ -151,6 +151,7 @@ grep -q "reporting:" "$BOOKS_ROOT/.books/policy.md" || { echo "FAIL: init policy
 grep -q "Next step: edit policy.md" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should tell user to edit policy"; exit 1; }
 grep -q "Next agent step: run \`clawbooks quickstart\`" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should point agents to quickstart"; exit 1; }
 grep -q "Workflow reminder for agents:" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should include workflow reminder"; exit 1; }
+grep -q "Suggested agent prompt:" "$BOOKS_ROOT/init-output.txt" || { echo "FAIL: init output should include a suggested agent prompt"; exit 1; }
 
 # Test 1b: workflow status and ack operate on local program/policy
 WORKFLOW_STATUS="$BOOKS_ROOT/workflow-status.json"
@@ -250,6 +251,7 @@ grep -q '"event_schema"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should p
 grep -q '"workflow"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should include workflow readiness"; exit 1; }
 grep -q '"produce_outputs"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe output generation workflow"; exit 1; }
 grep -q '"import_support"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should describe import support surfaces"; exit 1; }
+grep -q '"canonical_agent_prompt"' "$QUICKSTART_JSON" || { echo "FAIL: quickstart should include a canonical agent prompt"; exit 1; }
 
 HELP_SUMMARY="$EMPTY_DIR3/help-summary.txt"
 (cd "$EMPTY_DIR3" && $CLI summary --help 2>&1) > "$HELP_SUMMARY"
@@ -324,17 +326,23 @@ grep -q '"mapping_diagnostics"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import che
 grep -q '"matched_event_count": 2' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report mapping coverage"; exit 1; }
 grep -q '"what_matters"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should include operator-facing summary text"; exit 1; }
 grep -q '"source_coverage"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should report source coverage"; exit 1; }
+grep -q '"reporting_mode": "provisional"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should mark unacknowledged runs provisional"; exit 1; }
+grep -q '"classification_basis": "unknown"' "$IMPORT_CHECK_JSON" || { echo "FAIL: import check should surface unknown classification basis before workflow ack"; exit 1; }
 test -f "$IMPORT_ROOT/.books/imports/sessions/test-session.json" || { echo "FAIL: import check should save import session sidecar"; exit 1; }
 
 IMPORT_SESSIONS_LIST="$IMPORT_ROOT/import-sessions-list.json"
 (cd "$IMPORT_ROOT" && $CLI import sessions list 2>&1) > "$IMPORT_SESSIONS_LIST"
 grep -q '"command": "import sessions list"' "$IMPORT_SESSIONS_LIST" || { echo "FAIL: import sessions list should identify itself"; exit 1; }
 grep -q '"import_session": "test-session"' "$IMPORT_SESSIONS_LIST" || { echo "FAIL: import sessions list should include saved session"; exit 1; }
+grep -q '"workflow_acknowledged": false' "$IMPORT_SESSIONS_LIST" || { echo "FAIL: import sessions list should expose workflow acknowledgment state"; exit 1; }
 
 IMPORT_SESSIONS_SHOW="$IMPORT_ROOT/import-sessions-show.json"
 (cd "$IMPORT_ROOT" && $CLI import sessions show latest 2>&1) > "$IMPORT_SESSIONS_SHOW"
 grep -q '"command": "import sessions show"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should identify itself"; exit 1; }
 grep -q '"session_schema_version": "clawbooks.import-session.v1"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should expose session schema version"; exit 1; }
+grep -q '"program_hash"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should persist program hash"; exit 1; }
+grep -q '"policy_hash"' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should persist policy hash"; exit 1; }
+grep -q '"workflow_acknowledged": false' "$IMPORT_SESSIONS_SHOW" || { echo "FAIL: import sessions show should persist workflow acknowledgment state"; exit 1; }
 
 IMPORT_RECONCILE_JSON="$IMPORT_ROOT/import-reconcile.json"
 (cd "$IMPORT_ROOT" && $CLI import reconcile staged.jsonl --statement statement-profile.json 2>&1) > "$IMPORT_RECONCILE_JSON"
@@ -519,6 +527,7 @@ grep -q '"readiness": "starter"' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart 
 grep -q '"provisional_outputs": true' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should mark starter outputs as provisional"; exit 1; }
 grep -q '"path": ".*/docs/event-schema.md"' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should include event schema path"; exit 1; }
 grep -q 'balance sheet' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should describe broader reporting outcomes"; exit 1; }
+grep -q '"canonical_agent_prompt"' "$QUICKSTART_DOCS" || { echo "FAIL: quickstart should expose canonical agent prompt"; exit 1; }
 
 DOCUMENTS_JSON="$DOCS_ROOT/documents.json"
 (cd "$DOCS_ROOT" && $CLI documents 2026-03 --as-of 2026-03-31T00:00:00.000Z 2>&1) > "$DOCUMENTS_JSON"
@@ -530,6 +539,8 @@ grep -q '"open_balance": 300' "$DOCUMENTS_JSON" || { echo "FAIL: documents shoul
 
 SUMMARY_DOCS="$DOCS_ROOT/summary-docs.json"
 (cd "$DOCS_ROOT" && $CLI summary 2026-03 2>&1) > "$SUMMARY_DOCS"
+grep -q '"reporting_mode": "provisional"' "$SUMMARY_DOCS" || { echo "FAIL: summary should mark unacknowledged reporting as provisional"; exit 1; }
+grep -q '"classification_basis": "unknown"' "$SUMMARY_DOCS" || { echo "FAIL: summary should surface unknown classification basis when workflow is unacknowledged"; exit 1; }
 grep -q '"settlement_summary"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include settlement_summary"; exit 1; }
 grep -q '"receivable_candidates"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include receivable_candidates"; exit 1; }
 grep -q '"review_materiality"' "$SUMMARY_DOCS" || { echo "FAIL: summary should include review_materiality"; exit 1; }
@@ -548,6 +559,7 @@ grep -q '"correction_summary"' "$CONTEXT_DOCS" || { echo "FAIL: context should i
 
 REVIEW_DOCS="$DOCS_ROOT/review-docs.json"
 (cd "$DOCS_ROOT" && $CLI review 2026-03 2>&1) > "$REVIEW_DOCS"
+grep -q '"reporting_mode": "provisional"' "$REVIEW_DOCS" || { echo "FAIL: review should mark unacknowledged runs provisional"; exit 1; }
 grep -q '"needs_review": 1' "$REVIEW_DOCS" || { echo "FAIL: confirmed items should be excluded from review"; exit 1; }
 grep -q '"id": "rev2"' "$REVIEW_DOCS" || { echo "FAIL: remaining inferred item should stay in review"; exit 1; }
 grep -q '"reason_in_queue"' "$REVIEW_DOCS" || { echo "FAIL: review should explain why items are in queue"; exit 1; }
@@ -588,9 +600,11 @@ grep -q '"resolved_scope"' "$RECONCILE_DATE_BASIS" || { echo "FAIL: reconcile sh
 
 PACK_OUT="$DOCS_ROOT/pack"
 mkdir -p "$PACK_OUT"
-(cd "$DOCS_ROOT" && $CLI pack 2026-03 --out "$PACK_OUT" >/dev/null 2>&1)
+(cd "$DOCS_ROOT" && $CLI pack 2026-03 --out "$PACK_OUT" >/dev/null 2>&1) && { echo "FAIL: pack should refuse provisional runs without override"; exit 1; }
+(cd "$DOCS_ROOT" && $CLI pack 2026-03 --out "$PACK_OUT" --allow-provisional >/dev/null 2>&1)
 test -f "$PACK_OUT/corrections.csv" || { echo "FAIL: pack should include corrections.csv"; exit 1; }
 test -f "$PACK_OUT/confirmations.csv" || { echo "FAIL: pack should include confirmations.csv"; exit 1; }
+grep -q '"reporting_mode": "provisional"' "$PACK_OUT/summary.json" || { echo "FAIL: pack summary should mark provisional reporting mode when override is used"; exit 1; }
 rm -rf "$DOCS_ROOT"
 
 echo "books-resolution tests: ok"
