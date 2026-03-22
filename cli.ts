@@ -144,6 +144,10 @@ Important terms:
   provisional  Exploratory output produced without full workflow grounding
   snapshot     Saved derived checkpoint in the ledger; not the source of truth
 
+Library surface:
+  Import pure shared business logic from clawbooks/operations when you need
+  the same validation/reporting behavior outside the CLI.
+
 Quick examples:
   clawbooks quickstart
   clawbooks doctor

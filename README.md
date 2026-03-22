@@ -73,6 +73,7 @@ Clawbooks is not just for lightweight summaries. The toolchain is intended to su
 - custom period reporting and transaction investigations
 
 The outputs come from combining `summary`, `context`, `documents`, `assets`, `verify`, `reconcile`, and `pack` with the rules in `policy.md`.
+The same pure business logic is also exported as `clawbooks/operations` for non-CLI adapters.
 
 Those outputs should be read together with the run state:
 
@@ -98,6 +99,28 @@ summary / context / documents / assets / pack
   ->
 P&L / balance sheet / cash flow / tax views / audit outputs
 ```
+
+## CLI And Operations Module
+
+The CLI is the default operator surface, but the package also exports a shared operations layer:
+
+```ts
+import {
+  buildSummary,
+  buildImportCheck,
+  buildReviewQueue,
+  prepareRecord,
+  prepareBatch,
+} from "clawbooks/operations";
+```
+
+Use `clawbooks/operations` when you want the same business logic in another adapter such as a web app, background worker, or tests.
+
+- operations take data in and return data out
+- operations throw on invalid input instead of calling `process.exit`
+- write helpers return prepared events or JSONL lines while the adapter performs actual I/O
+
+The CLI uses that same layer internally, so reporting and validation behavior stays aligned across surfaces.
 
 ## First Run
 
@@ -274,6 +297,7 @@ clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 `review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
 `summary`, `review`, `verify`, and `reconcile` now echo their resolved scope so operators can see the actual time window and filters that were applied.
 `summary`, `context`, and `review` can be run in provisional mode when you explicitly choose exploratory output. `pack` is stricter: it refuses provisional runs unless you pass `--allow-provisional`.
+For non-CLI integrations, the same logic is available from `clawbooks/operations`.
 Period arguments support whole years (`2026`), months (`2026-03`), and explicit ranges (`2026-01/2026-06-30`).
 
 Maintenance:
@@ -355,6 +379,7 @@ cd clawbooks
 npm install
 npm run build
 node build/cli.js quickstart
+node -e "import('./build/operations.js').then(m => console.log(Object.keys(m).sort()))"
 ```
 
 ## Boundary
