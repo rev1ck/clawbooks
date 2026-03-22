@@ -1,11 +1,23 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { positional, flags } from "../cli-helpers.js";
-import { round2, sortByTimestamp } from "../reporting.js";
-import { filterByDateBasis, type DateBasis } from "../imports.js";
+import { type DateBasis } from "../imports.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
-import { META_TYPES } from "../event-types.js";
-import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode } from "../workflow-state.js";
+import {
+  buildImportCheck,
+  buildImportReconciliation,
+  dateCoverage,
+  duplicateRefs,
+  eventCountsByType,
+  mappingDiagnostics,
+  orderingProfile,
+  provenanceCoverage,
+  suggestMappings,
+  validateMappingsFile,
+  type StatementProfile,
+  type VendorMapping,
+} from "../operations.js";
+import { buildWorkflowStatus } from "../workflow-state.js";
 
 type ImportParams = {
   booksDir: string | null;
@@ -13,28 +25,6 @@ type ImportParams = {
 };
 
 type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch";
-type StatementProfile = {
-  statement_id?: string;
-  source?: string;
-  currency?: string;
-  date_basis?: DateBasis;
-  statement_start?: string;
-  statement_end?: string;
-  opening_balance?: number;
-  closing_balance?: number;
-  count?: number;
-  debits?: number;
-  credits?: number;
-  newest_first?: boolean;
-};
-
-type VendorMapping = {
-  match: string;
-  type?: string;
-  category?: string;
-  confidence?: string;
-  notes?: string;
-};
 
 type ImportSessionRecord = {
   import_session: string;
@@ -80,48 +70,6 @@ type ImportSessionRecord = {
 
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
 
-function descriptionOf(event: LedgerEvent): string | null {
-  const value = event.data.description;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function normalizeVendorText(value: string): string {
-  return value
-    .toUpperCase()
-    .replace(/\d+/g, "#")
-    .replace(/[^A-Z#]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function countMapEntries(values: string[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const value of values) {
-    const key = value.trim();
-    if (!key) continue;
-    out[key] = (out[key] ?? 0) + 1;
-  }
-  return out;
-}
-
-function topEntry(counts: Record<string, number>): { value: string; count: number } | null {
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  return entries[0] ? { value: entries[0][0], count: entries[0][1] } : null;
-}
-
-function distinctCount(counts: Record<string, number>): number {
-  return Object.keys(counts).length;
-}
-
-function matchingMapping(description: string, mappings: VendorMapping[]): VendorMapping | null {
-  const normalizedDescription = normalizeVendorText(description);
-  const sorted = mappings
-    .filter((mapping) => typeof mapping.match === "string" && mapping.match.trim())
-    .slice()
-    .sort((a, b) => normalizeVendorText(b.match).length - normalizeVendorText(a.match).length);
-  return sorted.find((mapping) => normalizedDescription.includes(normalizeVendorText(mapping.match))) ?? null;
-}
-
 function readVendorMappings(path: string | null): { path: string | null; mappings: VendorMapping[]; issues: string[] } {
   if (!path) return { path: null, mappings: [], issues: [] };
   if (!existsSync(path)) return { path: resolve(path), mappings: [], issues: [`No vendor mappings file found at ${resolve(path)}`] };
@@ -155,227 +103,6 @@ function resolveVendorMappingsPaths(
   return {
     used: checked.find((candidate) => existsSync(candidate)) ?? null,
     checked,
-  };
-}
-
-function vendorHistory(events: LedgerEvent[]) {
-  const groups: Record<string, {
-    key: string;
-    count: number;
-    descriptions: Record<string, number>;
-    types: Record<string, number>;
-    categories: Record<string, number>;
-    confidences: Record<string, number>;
-    sources: Record<string, number>;
-    ids: string[];
-  }> = {};
-  for (const event of events) {
-    if (META_TYPES.has(event.type)) continue;
-    const description = descriptionOf(event);
-    if (!description) continue;
-    const key = normalizeVendorText(description);
-    if (!key) continue;
-    const bucket = groups[key] ?? {
-      key,
-      count: 0,
-      descriptions: {},
-      types: {},
-      categories: {},
-      confidences: {},
-      sources: {},
-      ids: [],
-    };
-    bucket.count++;
-    bucket.descriptions[description] = (bucket.descriptions[description] ?? 0) + 1;
-    bucket.types[event.type] = (bucket.types[event.type] ?? 0) + 1;
-    const category = typeof event.data.category === "string" ? event.data.category : "";
-    if (category) bucket.categories[category] = (bucket.categories[category] ?? 0) + 1;
-    const confidence = typeof event.data.confidence === "string" ? event.data.confidence : "";
-    if (confidence) bucket.confidences[confidence] = (bucket.confidences[confidence] ?? 0) + 1;
-    bucket.sources[event.source] = (bucket.sources[event.source] ?? 0) + 1;
-    bucket.ids.push(event.id);
-    groups[key] = bucket;
-  }
-  return groups;
-}
-
-function stableHistorySummary(history: ReturnType<typeof vendorHistory>[string]) {
-  const type = topEntry(history.types);
-  const category = topEntry(history.categories);
-  if (!type || !category) return null;
-  const stableType = distinctCount(history.types) === 1 && type.count === history.count;
-  const stableCategory = distinctCount(history.categories) === 1 && category.count === history.count;
-  if (!stableType || !stableCategory) return null;
-  const confidence = topEntry(history.confidences);
-  const example = topEntry(history.descriptions);
-  return {
-    type: type.value,
-    category: category.value,
-    confidence: confidence && distinctCount(history.confidences) === 1 ? confidence.value : undefined,
-    example_description: example?.value ?? null,
-    count: history.count,
-  };
-}
-
-function mappingDiagnostics(events: LedgerEvent[], mappings: VendorMapping[], ledgerHistoryEvents: LedgerEvent[]) {
-  const describedEvents = events.filter((event) => descriptionOf(event));
-  const stagedGroups = vendorHistory(events);
-  const historicalGroups = vendorHistory(ledgerHistoryEvents);
-  const mappingConflicts: Array<Record<string, unknown>> = [];
-  const historyConflicts: Array<Record<string, unknown>> = [];
-  const knownHistoryWithoutMapping: Array<Record<string, unknown>> = [];
-  const repeatedUnmapped: Array<Record<string, unknown>> = [];
-  let matchedEventCount = 0;
-  let describedEventCount = 0;
-
-  for (const event of describedEvents) {
-    const description = descriptionOf(event)!;
-    const key = normalizeVendorText(description);
-    const mapping = matchingMapping(description, mappings);
-    const historical = historicalGroups[key];
-    const stableHistorical = historical ? stableHistorySummary(historical) : null;
-    describedEventCount++;
-
-    if (mapping) {
-      matchedEventCount++;
-      const category = typeof event.data.category === "string" ? event.data.category : null;
-      const confidence = typeof event.data.confidence === "string" ? event.data.confidence : null;
-      if ((mapping.type && event.type !== mapping.type) || (mapping.category && category && category !== mapping.category) || (mapping.confidence && confidence && confidence !== mapping.confidence)) {
-        mappingConflicts.push({
-          id: event.id,
-          description,
-          mapping_match: mapping.match,
-          event_type: event.type,
-          mapped_type: mapping.type ?? null,
-          event_category: category,
-          mapped_category: mapping.category ?? null,
-          event_confidence: confidence,
-          mapped_confidence: mapping.confidence ?? null,
-        });
-      }
-    }
-
-    if (stableHistorical) {
-      const category = typeof event.data.category === "string" ? event.data.category : null;
-      if (!mapping) {
-        knownHistoryWithoutMapping.push({
-          normalized_vendor: key,
-          example_description: stableHistorical.example_description ?? description,
-          stable_count: stableHistorical.count,
-          stable_type: stableHistorical.type,
-          stable_category: stableHistorical.category,
-        });
-      }
-      if (event.type !== stableHistorical.type || (category && category !== stableHistorical.category)) {
-        historyConflicts.push({
-          id: event.id,
-          description,
-          historical_type: stableHistorical.type,
-          event_type: event.type,
-          historical_category: stableHistorical.category,
-          event_category: category,
-          historical_count: stableHistorical.count,
-        });
-      }
-    }
-  }
-
-  for (const group of Object.values(stagedGroups)) {
-    const stable = stableHistorySummary(group);
-    const example = topEntry(group.descriptions)?.value ?? null;
-    const hasMapping = mappings.some((mapping) => example ? matchingMapping(example, [mapping]) : false);
-    if (!hasMapping && group.count >= 2) {
-      repeatedUnmapped.push({
-        normalized_vendor: group.key,
-        count: group.count,
-        example_description: example,
-        stable_in_staged_file: stable !== null,
-      });
-    }
-  }
-
-  const uniqueKnownHistoryWithoutMapping = Object.values(knownHistoryWithoutMapping.reduce((acc, item) => {
-    const key = String(item.normalized_vendor);
-    acc[key] = acc[key] ?? item;
-    return acc;
-  }, {} as Record<string, Record<string, unknown>>));
-
-  return {
-    described_event_count: describedEventCount,
-    matched_event_count: matchedEventCount,
-    unmatched_described_event_count: describedEventCount - matchedEventCount,
-    mapping_conflict_count: mappingConflicts.length,
-    history_conflict_count: historyConflicts.length,
-    repeated_unmapped_vendor_count: repeatedUnmapped.length,
-    known_history_without_mapping_count: uniqueKnownHistoryWithoutMapping.length,
-    mapping_conflicts: mappingConflicts.slice(0, 10),
-    history_conflicts: historyConflicts.slice(0, 10),
-    repeated_unmapped_vendors: repeatedUnmapped.slice(0, 10),
-    known_history_without_mapping: uniqueKnownHistoryWithoutMapping.slice(0, 10),
-  };
-}
-
-function suggestMappings(events: LedgerEvent[], existingMappings: VendorMapping[], minOccurrences: number) {
-  const groups = vendorHistory(events);
-  const suggestions = Object.values(groups)
-    .filter((group) => group.count >= minOccurrences)
-    .map((group) => {
-      const stable = stableHistorySummary(group);
-      if (!stable) return null;
-      const example = stable.example_description ?? topEntry(group.descriptions)?.value ?? null;
-      if (!example) return null;
-      const existing = matchingMapping(example, existingMappings);
-      return {
-        normalized_vendor: group.key,
-        count: group.count,
-        example_description: example,
-        suggested_mapping: {
-          match: example,
-          type: stable.type,
-          category: stable.category,
-          ...(stable.confidence ? { confidence: stable.confidence } : {}),
-          notes: `Derived from ${group.count} historical ledger event(s) with stable classification.`,
-        },
-        already_covered: existing !== null,
-        existing_match: existing?.match ?? null,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item))
-    .sort((a, b) => b.count - a.count || a.normalized_vendor.localeCompare(b.normalized_vendor));
-
-  return {
-    total_candidates: suggestions.length,
-    uncovered_candidates: suggestions.filter((item) => !item.already_covered).length,
-    suggestions,
-  };
-}
-
-function validateMappingsFile(mappings: VendorMapping[]) {
-  const duplicateMatches = Object.entries(countMapEntries(mappings.map((mapping) => normalizeVendorText(mapping.match))))
-    .filter(([, count]) => count > 1)
-    .map(([match, count]) => ({ normalized_match: match, count }));
-  const overlaps: Array<{ match: string; overlaps_with: string }> = [];
-  const normalized = mappings.map((mapping) => ({ raw: mapping.match, normalized: normalizeVendorText(mapping.match) }))
-    .filter((mapping) => mapping.normalized);
-  for (let i = 0; i < normalized.length; i++) {
-    for (let j = i + 1; j < normalized.length; j++) {
-      if (normalized[i].normalized === normalized[j].normalized) continue;
-      if (normalized[i].normalized.includes(normalized[j].normalized) || normalized[j].normalized.includes(normalized[i].normalized)) {
-        overlaps.push({ match: normalized[i].raw, overlaps_with: normalized[j].raw });
-      }
-    }
-  }
-  const incompleteMappings = mappings
-    .filter((mapping) => !mapping.type || !mapping.category)
-    .map((mapping) => ({ match: mapping.match, type: mapping.type ?? null, category: mapping.category ?? null }));
-  return {
-    mapping_count: mappings.length,
-    duplicate_match_count: duplicateMatches.length,
-    overlap_count: overlaps.length,
-    incomplete_mapping_count: incompleteMappings.length,
-    duplicate_matches: duplicateMatches,
-    overlapping_matches: overlaps.slice(0, 20),
-    incomplete_mappings: incompleteMappings.slice(0, 20),
   };
 }
 
@@ -429,105 +156,6 @@ function readStatementProfile(path: string): StatementProfile {
   }
 }
 
-function sumBySign(events: LedgerEvent[]): { debits: number; credits: number; net: number } {
-  let debits = 0;
-  let credits = 0;
-  let net = 0;
-  for (const event of events) {
-    const amount = Number(event.data.amount);
-    if (!Number.isFinite(amount)) continue;
-    net = round2(net + amount);
-    if (amount < 0) debits = round2(debits + amount);
-    else credits = round2(credits + amount);
-  }
-  return { debits, credits, net };
-}
-
-function eventCountsByType(events: LedgerEvent[]): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const event of events) {
-    out[event.type] = (out[event.type] ?? 0) + 1;
-  }
-  return out;
-}
-
-function provenanceCoverage(events: LedgerEvent[]) {
-  const counters = {
-    source_doc: 0,
-    source_row: 0,
-    source_hash: 0,
-    provenance: 0,
-    ref: 0,
-  };
-  for (const event of events) {
-    if (event.data.source_doc !== undefined) counters.source_doc++;
-    if (event.data.source_row !== undefined) counters.source_row++;
-    if (event.data.source_hash !== undefined) counters.source_hash++;
-    if (event.data.provenance !== undefined) counters.provenance++;
-    if (event.data.ref !== undefined) counters.ref++;
-  }
-  return {
-    total: events.length,
-    fields: Object.fromEntries(Object.entries(counters).map(([key, count]) => [key, {
-      count,
-      missing: events.length - count,
-    }])),
-  };
-}
-
-function dateCoverage(events: LedgerEvent[]) {
-  let transactionDate = 0;
-  let postingDate = 0;
-  for (const event of events) {
-    if (typeof event.data.transaction_date === "string" && event.data.transaction_date) transactionDate++;
-    if (typeof event.data.posting_date === "string" && event.data.posting_date) postingDate++;
-  }
-  return {
-    total: events.length,
-    transaction_date: {
-      count: transactionDate,
-      missing: events.length - transactionDate,
-    },
-    posting_date: {
-      count: postingDate,
-      missing: events.length - postingDate,
-    },
-  };
-}
-
-function orderingProfile(events: LedgerEvent[], basis: DateBasis) {
-  const values = events
-    .map((event) => {
-      if (basis === "ledger") return event.ts;
-      const value = basis === "transaction" ? event.data.transaction_date : event.data.posting_date;
-      return typeof value === "string" ? value : null;
-    })
-    .filter((value): value is string => Boolean(value));
-  let asc = true;
-  let desc = true;
-  for (let i = 1; i < values.length; i++) {
-    if (values[i] < values[i - 1]) asc = false;
-    if (values[i] > values[i - 1]) desc = false;
-  }
-  return {
-    basis,
-    order: asc ? "ascending" : desc ? "descending" : "mixed",
-    event_count_with_basis: values.length,
-  } as const;
-}
-
-function duplicateRefs(events: LedgerEvent[]): string[] {
-  const seen = new Set<string>();
-  const duplicates = new Set<string>();
-  for (const event of events) {
-    const ref = typeof event.data.ref === "string" ? event.data.ref : null;
-    if (!ref) continue;
-    if (seen.has(ref)) duplicates.add(ref);
-    seen.add(ref);
-  }
-  return [...duplicates].sort();
-}
-
 function statementProfileTemplate(): string {
   return JSON.stringify({
     statement_id: "replace-with-statement-id",
@@ -562,18 +190,6 @@ function vendorMappingsTemplate(): string {
       },
     ],
   }, null, 2) + "\n";
-}
-
-function dateRange(events: LedgerEvent[], basis: DateBasis): { first: string | null; last: string | null } {
-  const dated = events
-    .map((event) => {
-      if (basis === "ledger") return event.ts;
-      const value = basis === "transaction" ? event.data.transaction_date : event.data.posting_date;
-      return typeof value === "string" ? value : null;
-    })
-    .filter((value): value is string => Boolean(value))
-    .sort();
-  return { first: dated[0] ?? null, last: dated[dated.length - 1] ?? null };
 }
 
 function defaultOutDir(kind: ScaffoldKind, booksDir: string | null): string {
@@ -1160,93 +776,17 @@ export function cmdImport(args: string[], params: ImportParams) {
       process.exit(1);
     }
 
-    const rawEvents = readEventsFile(resolve(inputPath));
-    let stagedEvents = rawEvents;
-    const currency = f.currency ?? profile.currency;
-    if (currency) stagedEvents = stagedEvents.filter((event) => String(event.data.currency) === currency);
-    if (profile.source) stagedEvents = stagedEvents.filter((event) => event.source === profile.source);
-    const sortedStaged = sortByTimestamp(stagedEvents);
-    const statementStart = f["statement-start"] ?? profile.statement_start;
-    const statementEnd = f["statement-end"] ?? profile.statement_end;
-    const stagedByBasis = filterByDateBasis(sortedStaged, {
-      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
-      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
-      basis: dateBasis,
+    const artifact = buildImportReconciliation({
+      inputPath: resolve(inputPath),
+      ledgerPath: resolve(params.ledgerPath),
+      rawEvents: readEventsFile(resolve(inputPath)),
+      allLedger: existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [],
+      profile,
+      dateBasis,
+      currency: f.currency,
+      statementStart: f["statement-start"],
+      statementEnd: f["statement-end"],
     });
-    const scopedStaged = stagedByBasis.events;
-    const stagedTotals = sumBySign(scopedStaged);
-
-    const allLedger = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
-    let imported = allLedger;
-    if (profile.source) imported = imported.filter((event) => event.source === profile.source);
-    if (currency) imported = imported.filter((event) => String(event.data.currency) === currency);
-    const importedByBasis = filterByDateBasis(sortByTimestamp(imported), {
-      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
-      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
-      basis: dateBasis,
-    });
-    const importedScoped = importedByBasis.events;
-    const importedTotals = sumBySign(importedScoped);
-
-    const skippedRows = Math.max(0, sortedStaged.length - scopedStaged.length - stagedByBasis.missingBasisIds.length);
-    const expectedClosing = profile.closing_balance ?? null;
-    const expectedOpening = profile.opening_balance ?? null;
-    const stagedClosing = expectedOpening !== null ? round2(Number(expectedOpening) + stagedTotals.net) : null;
-    const importedClosing = expectedOpening !== null ? round2(Number(expectedOpening) + importedTotals.net) : null;
-    const unexplainedDeltas = {
-      count: importedScoped.length - scopedStaged.length,
-      debits: round2(importedTotals.debits - stagedTotals.debits),
-      credits: round2(importedTotals.credits - stagedTotals.credits),
-      net_movement: round2(importedTotals.net - stagedTotals.net),
-      closing_balance: expectedClosing !== null && importedClosing !== null ? round2(importedClosing - Number(expectedClosing)) : null,
-    };
-    const statementAligned = Math.abs(unexplainedDeltas.count) === 0
-      && Math.abs(unexplainedDeltas.debits) < 0.01
-      && Math.abs(unexplainedDeltas.credits) < 0.01
-      && Math.abs(unexplainedDeltas.net_movement) < 0.01
-      && (unexplainedDeltas.closing_balance === null || Math.abs(unexplainedDeltas.closing_balance) < 0.01);
-    const artifact = {
-      command: "import reconcile",
-      workflow_state: statementAligned ? "statement_aligned" : "needs_reconciliation",
-      what_matters: "This statement reconciliation artifact compares the staged import, the current ledger slice, and the declared statement expectations.",
-      statement: {
-        statement_id: profile.statement_id ?? null,
-        source: profile.source ?? null,
-        currency: currency ?? null,
-        date_basis: dateBasis,
-        statement_start: statementStart ?? null,
-        statement_end: statementEnd ?? null,
-        opening_balance: expectedOpening,
-        closing_balance: expectedClosing,
-        newest_first: profile.newest_first ?? null,
-      },
-      staged: {
-        input_path: resolve(inputPath),
-        row_count: sortedStaged.length,
-        scoped_row_count: scopedStaged.length,
-        missing_date_basis_events: stagedByBasis.missingBasisIds.length,
-        skipped_rows: skippedRows,
-        debits: stagedTotals.debits,
-        credits: stagedTotals.credits,
-        net_movement: stagedTotals.net,
-        closing_balance: stagedClosing,
-        first_date: dateRange(scopedStaged, dateBasis).first,
-        last_date: dateRange(scopedStaged, dateBasis).last,
-      },
-      imported: {
-        ledger_path: resolve(params.ledgerPath),
-        row_count: importedScoped.length,
-        missing_date_basis_events: importedByBasis.missingBasisIds.length,
-        debits: importedTotals.debits,
-        credits: importedTotals.credits,
-        net_movement: importedTotals.net,
-        closing_balance: importedClosing,
-        first_date: dateRange(importedScoped, dateBasis).first,
-        last_date: dateRange(importedScoped, dateBasis).last,
-      },
-      unexplained_deltas: unexplainedDeltas,
-      next_best_command: statementAligned ? "clawbooks review" : "clawbooks import check",
-    };
 
     if (f.out) {
       const outPath = resolve(f.out);
@@ -1365,200 +905,37 @@ export function cmdImport(args: string[], params: ImportParams) {
     const mappingsResolution = resolveVendorMappingsPaths(f.mappings, f.statement, inputPath, params.booksDir);
     const loadedMappings = readVendorMappings(mappingsResolution.used);
     const ledgerHistoryEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
-    let rawFilteredEvents = rawEvents;
-    const currency = f.currency ?? profile.currency;
-    if (currency) rawFilteredEvents = rawFilteredEvents.filter((event) => String(event.data.currency) === currency);
-    if (profile.source) rawFilteredEvents = rawFilteredEvents.filter((event) => event.source === profile.source);
-    const events = sortByTimestamp(rawFilteredEvents);
-
-    const statementStart = f["statement-start"] ?? profile.statement_start;
-    const statementEnd = f["statement-end"] ?? profile.statement_end;
-    const filteredByBasis = filterByDateBasis(events, {
-      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
-      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
-      basis: dateBasis,
-    });
-    const rawFilteredByBasis = filterByDateBasis(rawFilteredEvents, {
-      after: statementStart ? `${statementStart}T00:00:00.000Z` : undefined,
-      before: statementEnd ? `${statementEnd}T23:59:59.999Z` : undefined,
-      basis: dateBasis,
-    });
-    const scopedEvents = filteredByBasis.events;
-    const outOfPeriodCount = events.length - scopedEvents.length - filteredByBasis.missingBasisIds.length;
-    const totals = sumBySign(scopedEvents);
-    const range = dateRange(scopedEvents, dateBasis);
-    const issues: string[] = [];
-    const expected: Record<string, number | string> = {};
-    const actual: Record<string, number | string | null> = {
-      count: scopedEvents.length,
-      debits: totals.debits,
-      credits: totals.credits,
-      net_movement: totals.net,
-      first_date: range.first,
-      last_date: range.last,
-    };
-    const differences: Record<string, number> = {};
-    const provenance = provenanceCoverage(scopedEvents);
-    const dates = dateCoverage(scopedEvents);
-    const filteredOrdering = orderingProfile(rawFilteredEvents, dateBasis);
-    const scopedOrdering = orderingProfile(rawFilteredByBasis.events, dateBasis);
-    const duplicateRefList = duplicateRefs(scopedEvents);
-    const mappingsReport = {
-      available: loadedMappings.path !== null,
-      path: loadedMappings.path,
-      file_issues: loadedMappings.issues,
-      file_checks: validateMappingsFile(loadedMappings.mappings),
-      diagnostics: mappingDiagnostics(rawFilteredEvents, loadedMappings.mappings, ledgerHistoryEvents),
-    };
-
-    if (f.count !== undefined || profile.count !== undefined) {
-      expected.count = f.count !== undefined ? parseInt(f.count) : Number(profile.count);
-      differences.count = scopedEvents.length - Number(expected.count);
-      if (differences.count !== 0) issues.push(`Count mismatch: expected ${expected.count}, got ${scopedEvents.length}`);
-    }
-    if (f.debits !== undefined || profile.debits !== undefined) {
-      expected.debits = f.debits !== undefined ? parseFloat(f.debits) : Number(profile.debits);
-      differences.debits = round2(totals.debits - Number(expected.debits));
-      if (Math.abs(differences.debits) > 0.01) issues.push(`Debits mismatch: expected ${expected.debits}, got ${totals.debits}`);
-    }
-    if (f.credits !== undefined || profile.credits !== undefined) {
-      expected.credits = f.credits !== undefined ? parseFloat(f.credits) : Number(profile.credits);
-      differences.credits = round2(totals.credits - Number(expected.credits));
-      if (Math.abs(differences.credits) > 0.01) issues.push(`Credits mismatch: expected ${expected.credits}, got ${totals.credits}`);
-    }
-    if (f["opening-balance"] !== undefined || profile.opening_balance !== undefined) {
-      expected.opening_balance = f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : Number(profile.opening_balance);
-      actual.opening_balance = Number(expected.opening_balance);
-    }
-    if (f["closing-balance"] !== undefined || profile.closing_balance !== undefined) {
-      expected.closing_balance = f["closing-balance"] !== undefined ? parseFloat(f["closing-balance"]) : Number(profile.closing_balance);
-      actual.closing_balance = round2((Number(actual.opening_balance ?? 0)) + totals.net);
-      differences.closing_balance = round2(Number(actual.closing_balance) - Number(expected.closing_balance));
-      if (Math.abs(differences.closing_balance) > 0.01) {
-        issues.push(`Closing balance mismatch: expected ${expected.closing_balance}, got ${actual.closing_balance}`);
-      }
-    }
-    if (statementStart) {
-      expected.statement_start = statementStart;
-      if (range.first && range.first < statementStart) issues.push(`First ${dateBasis} date ${range.first} falls before statement_start ${statementStart}`);
-    }
-    if (statementEnd) {
-      expected.statement_end = statementEnd;
-      if (range.last && range.last > statementEnd) issues.push(`Last ${dateBasis} date ${range.last} falls after statement_end ${statementEnd}`);
-    }
-    if (outOfPeriodCount > 0) {
-      issues.push(`${outOfPeriodCount} staged event(s) fall outside the requested statement period and were excluded from scoped checks.`);
-    }
-    if (profile.newest_first === true && filteredOrdering.order !== "descending") {
-      issues.push(`Statement profile says newest_first=true, but the staged file appears ${filteredOrdering.order} by ${dateBasis} date after source/currency filtering.`);
-    }
-    if (profile.newest_first === false && filteredOrdering.order !== "ascending") {
-      issues.push(`Statement profile says newest_first=false, but the staged file appears ${filteredOrdering.order} by ${dateBasis} date after source/currency filtering.`);
-    }
-
-    const passedChecks = [
-      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Count mismatch")) ? ["count"] : []),
-      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Debits mismatch")) ? ["debits"] : []),
-      ...(Object.keys(expected).length > 0 && !issues.some((issue) => issue.startsWith("Credits mismatch")) ? ["credits"] : []),
-      ...(expected.opening_balance !== undefined ? ["opening_balance"] : []),
-      ...(expected.closing_balance !== undefined && !issues.some((issue) => issue.startsWith("Closing balance mismatch")) ? ["closing_balance"] : []),
-      ...(outOfPeriodCount === 0 ? ["statement_window"] : []),
-      ...(duplicateRefList.length === 0 ? ["duplicate_refs"] : []),
-      ...(filteredByBasis.missingBasisIds.length === 0 ? ["date_basis_coverage"] : []),
-    ];
-    const sourceCoverage = {
-      raw_input_events: rawEvents.length,
-      filtered_events: events.length,
-      scoped_events: scopedEvents.length,
-      first_scoped_date: range.first,
-      last_scoped_date: range.last,
-      source_filter: profile.source ?? f.source ?? null,
-      statement_window: {
-        start: statementStart ?? null,
-        end: statementEnd ?? null,
-      },
-    };
-    const assumptions = [
-      `Date basis: ${dateBasis}`,
-      `Currency filter: ${currency ?? "none"}`,
-      `Source filter: ${profile.source ?? f.source ?? "none"}`,
-      `Mappings path used: ${loadedMappings.path ?? "none found"}`,
-    ];
-    const nextBestCommand = issues.length === 0
-      ? "clawbooks batch < staged.jsonl"
-      : "clawbooks import check staged.jsonl --statement statement-profile.json";
-    const sourceShapeHint = statementStart || statementEnd || profile.opening_balance !== undefined || profile.closing_balance !== undefined
-      ? "statement_like"
-      : "generic_event_export";
-    const classificationBasis = f["classification-basis"]
-      ?? (workflow.reporting_readiness === "ready"
-        ? "policy_guided"
-        : f.mapper || loadedMappings.path
-          ? "heuristic_pattern"
-          : f["recorded-by"]
-            ? "manual_operator"
-            : "unknown");
-    if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
-      console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
-      process.exit(1);
-    }
-    const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
-
-    console.log(JSON.stringify({
-      command: "import check",
+    const report = buildImportCheck({
+      inputPath: resolve(inputPath),
+      statementProfilePath: f.statement ? resolve(f.statement) : null,
+      rawEvents,
+      ledgerHistoryEvents,
       workflow,
-      reporting_mode: reportingMode,
-      classification_basis: classificationBasis,
-      workflow_warning: workflow.warning,
-      input_path: resolve(inputPath),
-      statement_profile_path: f.statement ? resolve(f.statement) : null,
-      statement_profile: Object.keys(profile).length > 0 ? profile : null,
-      date_basis: dateBasis,
-      currency: currency ?? null,
-      expected,
-      actual,
-      differences,
-      status: issues.length === 0 ? "ok" : "mismatch",
-      workflow_state: issues.length === 0 ? "ready_to_append" : "needs_mapper_or_profile_adjustment",
-      what_matters: issues.length === 0
-        ? "The staged import matches the active checks. Review once more, then append."
-        : "The staged import does not yet match the active checks. Fix the mapper or statement assumptions before append.",
-      source_shape_hint: sourceShapeHint,
-      passed_checks: [...new Set(passedChecks)],
-      blocking_issues: issues,
-      assumptions,
-      next_best_command: nextBestCommand,
-      issues,
-      missing_date_basis_events: filteredByBasis.missingBasisIds,
-      out_of_period_events: outOfPeriodCount,
-      input_event_count: rawEvents.length,
-      filtered_event_count: events.length,
-      source_coverage: sourceCoverage,
-      event_types: eventCountsByType(scopedEvents),
-      provenance_coverage: provenance,
-      date_coverage: dates,
-      mapping_diagnostics: {
-        ...mappingsReport,
-        discovery: {
-          checked_paths: mappingsResolution.checked,
-          used_path: loadedMappings.path,
-        },
+      profile: {
+        ...profile,
+        ...(f.count !== undefined ? { count: parseInt(f.count) } : {}),
+        ...(f.debits !== undefined ? { debits: parseFloat(f.debits) } : {}),
+        ...(f.credits !== undefined ? { credits: parseFloat(f.credits) } : {}),
+        ...(f["opening-balance"] !== undefined ? { opening_balance: parseFloat(f["opening-balance"]) } : {}),
+        ...(f["closing-balance"] !== undefined ? { closing_balance: parseFloat(f["closing-balance"]) } : {}),
       },
-      ordering: {
-        filtered: filteredOrdering,
-        scoped: scopedOrdering,
+      dateBasis,
+      currency: f.currency,
+      sourceFilter: f.source ?? null,
+      mappings: {
+        checkedPaths: mappingsResolution.checked,
+        path: loadedMappings.path,
+        issues: loadedMappings.issues,
+        mappings: loadedMappings.mappings,
       },
-      duplicate_refs: duplicateRefList,
-      next_steps: issues.length === 0
-        ? [
-          "Review the staged JSONL once more, then append with `clawbooks batch`.",
-          "Run `clawbooks verify`, `clawbooks reconcile`, and `clawbooks review` after append.",
-        ]
-        : [
-          "Adjust the mapper or source assumptions before appending.",
-          "Re-run `clawbooks import check` until the staged file matches the statement expectations.",
-        ],
-    }, null, 2));
+      classificationBasis: f["classification-basis"],
+      mapperPath: f.mapper ? resolve(f.mapper) : null,
+      recordedBy: f["recorded-by"] ?? null,
+      statementStart: f["statement-start"],
+      statementEnd: f["statement-end"],
+    });
+
+    console.log(JSON.stringify(report, null, 2));
 
     if (f["save-session"] === "true") {
       const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
@@ -1576,9 +953,9 @@ export function cmdImport(args: string[], params: ImportParams) {
         scaffold_kind: f.scaffold ?? null,
         input_path: resolve(inputPath),
         statement_profile_path: f.statement ? resolve(f.statement) : null,
-        status: issues.length === 0 ? "ok" : "mismatch",
-        reporting_mode: reportingMode,
-        classification_basis: classificationBasis,
+        status: report.status,
+        reporting_mode: report.reporting_mode,
+        classification_basis: report.classification_basis,
         workflow_acknowledged: workflow.reporting_readiness === "ready",
         workflow_state_path: workflow.state_path,
         program_path: workflow.program.path,
@@ -1586,31 +963,22 @@ export function cmdImport(args: string[], params: ImportParams) {
         program_hash: workflow.program.sha256,
         policy_hash: workflow.policy.sha256,
         date_basis: dateBasis,
-        currency: currency ?? null,
-        workflow_state: issues.length === 0 ? "ready_to_append" : "needs_mapper_or_profile_adjustment",
-        expected,
-        actual,
-        differences,
-        issue_count: issues.length,
-        issues,
-        source_coverage: sourceCoverage,
-        input_event_count: rawEvents.length,
-        filtered_event_count: events.length,
-        scoped_event_count: scopedEvents.length,
-        provenance_coverage: provenance,
-        date_coverage: dates,
-        mapping_diagnostics: {
-          ...mappingsReport,
-          discovery: {
-            checked_paths: mappingsResolution.checked,
-            used_path: loadedMappings.path,
-          },
-        },
-        ordering: {
-          filtered: filteredOrdering,
-          scoped: scopedOrdering,
-        },
-        duplicate_refs: duplicateRefList,
+        currency: report.currency,
+        workflow_state: report.workflow_state,
+        expected: report.expected,
+        actual: report.actual,
+        differences: report.differences,
+        issue_count: report.issues.length,
+        issues: report.issues,
+        source_coverage: report.source_coverage,
+        input_event_count: report.input_event_count,
+        filtered_event_count: report.filtered_event_count,
+        scoped_event_count: Number(report.source_coverage.scoped_events ?? 0),
+        provenance_coverage: report.provenance_coverage,
+        date_coverage: report.date_coverage,
+        mapping_diagnostics: report.mapping_diagnostics,
+        ordering: report.ordering,
+        duplicate_refs: report.duplicate_refs,
       };
       writeFileSync(sessionPath, JSON.stringify(sessionRecord, null, 2) + "\n", "utf-8");
       console.error(`Saved import session: ${sessionPath}`);

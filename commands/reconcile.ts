@@ -1,141 +1,31 @@
-import { filter, readAll } from "../ledger.js";
+import { readAll } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
-import { round2, sortByTimestamp } from "../reporting.js";
-import { META_TYPES } from "../event-types.js";
-import { filterByDateBasis, type DateBasis } from "../imports.js";
+import { type DateBasis } from "../imports.js";
+import { buildReconciliation } from "../operations.js";
 
 export function cmdReconcile(args: string[], ledgerPath: string) {
   const f = flags(args);
   const { after, before } = periodFromArgs(args);
   const dateBasis = (f["date-basis"] ?? "ledger") as DateBasis;
 
-  if (!f.source) {
-    console.error("Usage: clawbooks reconcile [period] --source S [--count N] [--debits N] [--credits N] [--currency C]");
+  try {
+    const report = buildReconciliation({
+      all: readAll(ledgerPath),
+      after,
+      before,
+      source: f.source,
+      dateBasis,
+      currency: f.currency,
+      count: f.count !== undefined ? parseInt(f.count) : undefined,
+      debits: f.debits !== undefined ? parseFloat(f.debits) : undefined,
+      credits: f.credits !== undefined ? parseFloat(f.credits) : undefined,
+      openingBalance: f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : undefined,
+      closingBalance: f["closing-balance"] !== undefined ? parseFloat(f["closing-balance"]) : undefined,
+      gaps: f.gaps === "true",
+    });
+    console.log(JSON.stringify(report, null, 2));
+  } catch (err) {
+    console.error(String((err as Error).message));
     process.exit(1);
   }
-  if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
-    console.error("Invalid --date-basis. Use ledger, transaction, or posting.");
-    process.exit(1);
-  }
-
-  const all = readAll(ledgerPath);
-  const sourceEvents = filter(all, { source: f.source });
-  const dated = filterByDateBasis(sourceEvents, { after, before, basis: dateBasis });
-  let events = sortByTimestamp(dated.events);
-
-  if (f.currency) {
-    events = events.filter((e) => String(e.data.currency) === f.currency);
-  }
-
-  let actualDebits = 0;
-  let actualCredits = 0;
-  let netMovement = 0;
-  for (const e of events) {
-    const amount = Number(e.data.amount);
-    if (!isNaN(amount)) {
-      netMovement = round2(netMovement + amount);
-      if (amount < 0) {
-        actualDebits = round2(actualDebits + amount);
-      } else {
-        actualCredits = round2(actualCredits + amount);
-      }
-    }
-  }
-
-  const expected: Record<string, number> = {};
-  const actual: Record<string, number> = {};
-  const differences: Record<string, number> = {};
-  const issues: string[] = [];
-  let status = "NO_EXPECTATIONS";
-
-  if (f.count !== undefined) {
-    expected.count = parseInt(f.count);
-    actual.count = events.length;
-    differences.count = actual.count - expected.count;
-    if (differences.count !== 0) issues.push(`Count mismatch: expected ${expected.count}, got ${actual.count}`);
-    status = "RECONCILED";
-  }
-
-  if (f.debits !== undefined) {
-    expected.debits = parseFloat(f.debits);
-    actual.debits = actualDebits;
-    differences.debits = round2(actual.debits - expected.debits);
-    if (Math.abs(differences.debits) > 0.01) issues.push(`Debits mismatch: expected ${expected.debits}, got ${actual.debits}`);
-    status = "RECONCILED";
-  }
-
-  if (f.credits !== undefined) {
-    expected.credits = parseFloat(f.credits);
-    actual.credits = actualCredits;
-    differences.credits = round2(actual.credits - expected.credits);
-    if (Math.abs(differences.credits) > 0.01) issues.push(`Credits mismatch: expected ${expected.credits}, got ${actual.credits}`);
-    status = "RECONCILED";
-  }
-
-  if (f["opening-balance"] !== undefined) {
-    expected.opening_balance = parseFloat(f["opening-balance"]);
-    actual.opening_balance = expected.opening_balance;
-    differences.opening_balance = 0;
-    status = "RECONCILED";
-  }
-
-  if (f["closing-balance"] !== undefined) {
-    expected.closing_balance = parseFloat(f["closing-balance"]);
-    actual.closing_balance = f["opening-balance"] !== undefined
-      ? round2(parseFloat(f["opening-balance"]) + netMovement)
-      : round2(netMovement);
-    differences.closing_balance = round2(actual.closing_balance - expected.closing_balance);
-    if (Math.abs(differences.closing_balance) > 0.01) {
-      issues.push(`Closing balance mismatch: expected ${expected.closing_balance}, got ${actual.closing_balance}`);
-    }
-    status = "RECONCILED";
-  }
-
-  if (issues.length > 0) status = "MISMATCH";
-
-  let gaps: string[] | undefined;
-  if (f.gaps === "true") {
-    gaps = [];
-    const dates = events
-      .filter((e) => !META_TYPES.has(e.type))
-      .map((e) => e.ts.slice(0, 10))
-      .filter((d, i, a) => a.indexOf(d) === i)
-      .sort();
-    for (let i = 1; i < dates.length; i++) {
-      const prev = new Date(dates[i - 1]);
-      const curr = new Date(dates[i]);
-      const diffDays = Math.round((curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays > 7) {
-        gaps.push(`${dates[i - 1]} → ${dates[i]} (${diffDays} days)`);
-      }
-    }
-  }
-
-  console.log(JSON.stringify({
-    requested_scope: {
-      after: after ?? null,
-      before: before ?? null,
-      source: f.source,
-      currency: f.currency ?? null,
-    },
-    date_basis: dateBasis,
-    period: { after: after ?? null, before: before ?? null },
-    resolved_scope: {
-      after: after ?? null,
-      before: before ?? null,
-      source: f.source,
-      currency: f.currency ?? null,
-      event_count: events.length,
-    },
-    expected, actual, differences, status, issues,
-    what_matters: status === "RECONCILED"
-      ? "Imported totals matched the active reconciliation checks."
-      : status === "MISMATCH"
-        ? "One or more reconciliation checks failed."
-        : "No explicit expectations were supplied, so reconcile reported actuals only.",
-    next_best_command: status === "RECONCILED" ? "clawbooks review" : "clawbooks import check",
-    net_movement: netMovement,
-    missing_date_basis_events: dated.missingBasisIds.length,
-    ...(gaps ? { gaps } : {}),
-  }, null, 2));
 }

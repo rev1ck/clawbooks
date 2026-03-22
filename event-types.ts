@@ -39,7 +39,7 @@ export function absAmount(event: LedgerEvent): number | undefined {
   return Math.abs(amount);
 }
 
-export function enforceSign(type: string, data: Record<string, unknown>): void {
+export function enforceSign(type: string, data: Record<string, unknown>): string | undefined {
   if (data.amount === undefined) return;
   const amount = Number(data.amount);
   if (isNaN(amount)) return;
@@ -56,6 +56,6 @@ export function enforceSign(type: string, data: Record<string, unknown>): void {
   } else if (INFLOW_TYPES.has(type)) {
     data.amount = Math.abs(amount);
   } else if (!META_TYPES.has(type) && !ASSET_EVENT_TYPES.has(type)) {
-    console.error(`Warning: unknown type "${type}" — sign not enforced. Verify the amount sign is correct.`);
+    return `Warning: unknown type "${type}" — sign not enforced. Verify the amount sign is correct.`;
   }
 }

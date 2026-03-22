@@ -29,6 +29,7 @@ run_workflow() {
 
     "${cli[@]}" quickstart > quickstart.json
     grep -q '"command": "quickstart"' quickstart.json || { echo "FAIL: quickstart should identify itself"; exit 1; }
+    "${cli[@]}" workflow ack --program --policy >/dev/null
 
     "${cli[@]}" import scaffold statement-csv > import-scaffold.json
     test -f ".books/imports/statement-csv/mapper.mjs" || { echo "FAIL: scaffold should create mapper.mjs"; exit 1; }

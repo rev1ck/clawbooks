@@ -1,6 +1,6 @@
-import { append, computeId, type LedgerEvent } from "../ledger.js";
+import { append } from "../ledger.js";
 import { flags, positional } from "../cli-helpers.js";
-import { enforceSign } from "../event-types.js";
+import { prepareRecord } from "../operations.js";
 import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdRecord(args: string[], ledgerPath: string) {
@@ -23,10 +23,6 @@ export function cmdRecord(args: string[], ledgerPath: string) {
     process.exit(1);
   }
 
-  if (!parsed.source || !parsed.type || !parsed.data) {
-    console.error("Required fields: source, type, data");
-    process.exit(1);
-  }
   const classificationBasis = f["classification-basis"]
     ?? (workflow.reporting_readiness === "ready" ? "policy_guided" : "manual_operator");
   if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
@@ -35,19 +31,12 @@ export function cmdRecord(args: string[], ledgerPath: string) {
   }
   const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
 
-  enforceSign(parsed.type, parsed.data);
-
-  const ts = parsed.ts ?? new Date().toISOString();
-  const event: LedgerEvent = {
-    ts,
-    source: parsed.source,
-    type: parsed.type,
-    data: parsed.data,
-    id: computeId(parsed.data, { source: parsed.source, type: parsed.type, ts }),
-    prev: "",
-  };
-
   try {
+    const { event, warning } = prepareRecord({
+      parsed,
+      defaultTs: new Date().toISOString(),
+    });
+    if (warning) console.error(warning);
     if (append(ledgerPath, event)) {
       console.log(JSON.stringify({
         recorded: true,

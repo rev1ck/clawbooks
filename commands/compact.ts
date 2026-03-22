@@ -1,7 +1,6 @@
-import { computeId, readAll, rewrite, type LedgerEvent } from "../ledger.js";
+import { readAll, rewrite } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
-import { META_TYPES } from "../event-types.js";
-import { buildReportingSections, round2, sortByTimestamp } from "../reporting.js";
+import { buildCompactPlan } from "../operations.js";
 
 export function cmdCompact(args: string[], ledgerPath: string) {
   const f = flags(args);
@@ -14,65 +13,22 @@ export function cmdCompact(args: string[], ledgerPath: string) {
     process.exit(1);
   }
 
-  const all = readAll(ledgerPath);
-  const keep = sortByTimestamp(all.filter((e) => e.ts > before));
-  const archive = sortByTimestamp(all.filter((e) => e.ts <= before));
+  const plan = buildCompactPlan({ all: readAll(ledgerPath), before });
 
-  if (archive.length === 0) {
-    console.log(JSON.stringify({ compacted: false, reason: "no events before cutoff" }));
+  const archivePath = f.archive ?? ledgerPath.replace(".jsonl", `-archive-${before.slice(0, 10)}.jsonl`);
+  if (!plan.compacted) {
+    console.log(JSON.stringify({ compacted: false, reason: plan.reason }));
     return;
   }
 
-  const balances: Record<string, number> = {};
-  const byCategory: Record<string, number> = {};
-  let eventCount = 0;
-  const reporting = buildReportingSections(archive);
-
-  for (const e of archive) {
-    if (META_TYPES.has(e.type)) continue;
-    const amount = Number(e.data.amount);
-    if (isNaN(amount)) continue;
-    eventCount++;
-    const currency = String(e.data.currency ?? "UNKNOWN");
-    const category = String(e.data.category ?? e.type);
-    balances[currency] = round2((balances[currency] ?? 0) + amount);
-    byCategory[category] = round2((byCategory[category] ?? 0) + amount);
-  }
-
-  const snapshotData = {
-    period: { after: "all", before },
-    event_count: eventCount,
-    balances,
-    by_category: byCategory,
-    movement_summary: reporting.movement_summary,
-    report_sections: reporting.sections,
-    report_totals: reporting.totals,
-    compacted_from: archive.length,
-  };
-
-  const ts = before;
-  const snapshotEvent: LedgerEvent = {
-    ts,
-    source: "clawbooks:compact",
-    type: "snapshot",
-    data: snapshotData,
-    id: computeId(snapshotData as unknown as Record<string, unknown>, {
-      source: "clawbooks:compact",
-      type: "snapshot",
-      ts,
-    }),
-    prev: "",
-  };
-
-  const archivePath = f.archive ?? ledgerPath.replace(".jsonl", `-archive-${before.slice(0, 10)}.jsonl`);
-  rewrite(archivePath, archive);
-  rewrite(ledgerPath, [snapshotEvent, ...keep]);
+  rewrite(archivePath, plan.archive);
+  rewrite(ledgerPath, [plan.snapshot_event, ...plan.keep]);
 
   console.log(JSON.stringify({
     compacted: true,
-    archived: archive.length,
+    archived: plan.archive.length,
     archive_path: archivePath,
-    snapshot_id: snapshotEvent.id,
-    remaining: keep.length + 1,
+    snapshot_id: plan.snapshot_event.id,
+    remaining: plan.keep.length + 1,
   }, null, 2));
 }

@@ -22,6 +22,10 @@
   "bin": {
     "clawbooks": "build/cli.js"
   },
+  "exports": {
+    ".": "./build/cli.js",
+    "./operations": "./build/operations.js"
+  },
   "scripts": {
     "build": "tsc && chmod 755 build/cli.js",
     "test": "npm run build && /usr/bin/bash test/cli.regression.sh",
