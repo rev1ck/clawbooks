@@ -122,6 +122,35 @@ Use `clawbooks/operations` when you want the same business logic in another adap
 
 The CLI uses that same layer internally, so reporting and validation behavior stays aligned across surfaces.
 
+## Codex Skill
+
+Clawbooks also ships an installable Codex skill in [`skills/clawbooks`](./skills/clawbooks/).
+
+Where skills live:
+
+- distributed from a repo under a folder such as `skills/clawbooks/`
+- installed locally into `~/.codex/skills/clawbooks` or `$CODEX_HOME/skills/clawbooks`
+
+If you installed `clawbooks` from npm, the easiest path is:
+
+```bash
+clawbooks skill install
+```
+
+That copies the packaged skill into your local Codex skills directory. Then restart Codex.
+
+Useful variants:
+
+```bash
+clawbooks skill path
+clawbooks skill install --force
+clawbooks skill install --dest ~/.codex/skills
+```
+
+If you want to install the skill directly from this repo instead of from the npm package, use your Codex skill installer against the repo path `skills/clawbooks`, or copy that folder into your local Codex skills directory under the name `clawbooks`.
+
+The repo and npm package should be the canonical distribution surfaces for the skill. A website can help users discover the skill and explain what it does, but the website should link back to the repo or package install path rather than becoming the source of truth for the skill contents.
+
 ## First Run
 
 Install:

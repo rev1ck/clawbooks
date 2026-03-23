@@ -1,6 +1,6 @@
 {
   "name": "clawbooks",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Accounting by inference, not by engine. Zero dependencies.",
   "type": "module",
   "repository": {
@@ -41,6 +41,7 @@
   "files": [
     "build",
     "docs",
+    "skills",
     "program.md",
     "agent-bootstrap.md",
     "policy.md.example",

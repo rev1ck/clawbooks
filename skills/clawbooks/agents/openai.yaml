@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clawbooks"
+  short_description: "Import, review, and report with Clawbooks"
+  default_prompt: "Use $clawbooks to work with Clawbooks books, choose the right surface, and keep results policy-grounded where possible."

@@ -13,6 +13,7 @@ const SUPPORT_FILES = {
   agentBootstrap: resolve(MODULE_DIR, "..", "agent-bootstrap.md"),
   eventSchema: resolve(MODULE_DIR, "..", "docs", "event-schema.md"),
 } as const;
+const PACKAGED_SKILLS_DIR = resolve(MODULE_DIR, "..", "skills");
 
 export type PolicyExampleName = keyof typeof POLICY_EXAMPLES;
 export type BooksResolution =
@@ -92,6 +93,11 @@ export function packageSupportFiles(): {
       event_schema: existsSync(SUPPORT_FILES.eventSchema),
     },
   };
+}
+
+export function packagedSkillPath(name: string): { path: string; exists: boolean } {
+  const path = resolve(PACKAGED_SKILLS_DIR, name);
+  return { path, exists: existsSync(path) };
 }
 
 export function resolveProgramPath(booksDir: string | null): { path: string; source: "books" | "package"; exists: boolean } {

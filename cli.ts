@@ -24,6 +24,7 @@ import { cmdBatch } from "./commands/batch.js";
 import { cmdAssets } from "./commands/assets.js";
 import { cmdPack } from "./commands/pack.js";
 import { cmdImport } from "./commands/import.js";
+import { cmdSkill } from "./commands/skill.js";
 import { CLI_VERSION } from "./version.js";
 
 // Parse --books global flag from argv before command dispatch
@@ -97,6 +98,7 @@ Setup:
                                       Inspect saved import-session sidecars
   import      reconcile <events.jsonl> [flags]
                                       Build a statement reconciliation artifact
+  skill       [path|install] [flags]  Inspect or install the packaged Codex skill
   where                               Show resolved books, ledger, and policy paths
   quickstart                          Explain the operating model, key files, and first-run flow
   doctor                              Show setup diagnostics and policy readiness
@@ -164,6 +166,8 @@ Quick examples:
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
   clawbooks import reconcile staged.jsonl --statement statement-profile.json
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
+  clawbooks skill path
+  clawbooks skill install
   clawbooks policy --path
   clawbooks policy lint
   clawbooks policy --list-examples
@@ -199,6 +203,8 @@ Common flags:
   --verbose                   Print full raw payloads where supported
   --include-policy            Inline the full policy in context output
   --last   <N>                Last N events (log only, default 20)
+  --dest <DIR>                Destination directory for skill installation
+  --force                     Replace an existing installed skill
 
 Reconcile flags:
   --count    <N>              Expected event count
@@ -326,6 +332,16 @@ Build a statement reconciliation artifact that compares the staged import, curre
 Examples:
   clawbooks import reconcile staged.jsonl --statement statement-profile.json
   clawbooks import reconcile staged.jsonl --statement statement-profile.json --out reconcile-artifact.json`,
+    skill: `Usage: clawbooks skill [path|install] [--dest DIR] [--force]
+
+Inspect the packaged Clawbooks Codex skill or install it into the local Codex skills directory.
+By default install copies to $CODEX_HOME/skills/clawbooks or ~/.codex/skills/clawbooks.
+
+Examples:
+  clawbooks skill path
+  clawbooks skill install
+  clawbooks skill install --force
+  clawbooks skill install --dest ~/.codex/skills`,
     review: `Usage: clawbooks review [period] [--confidence LIST] [--min-magnitude N] [--limit N] [--group-by category|source|type] [--allow-provisional]
 
 Show items needing review. By default, review includes inferred, unclear, and unset confidence items and sorts by materiality.
@@ -513,5 +529,6 @@ switch (cmd) {
   case "assets":    cmdAssets(args, LEDGER); break;
   case "compact":   cmdCompact(args, LEDGER); break;
   case "pack":      cmdPack(args, { booksDir: BOOKS_DIR ?? undefined, ledgerPath: LEDGER, policyPath: POLICY }); break;
+  case "skill":     cmdSkill(args); break;
   default:          console.log(HELP);
 }
