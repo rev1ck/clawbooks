@@ -89,6 +89,61 @@ export function buildReportingSections(events: LedgerEvent[]) {
   };
 }
 
+export function buildCategoryRollup(events: LedgerEvent[]) {
+  const buckets: Record<string, {
+    count: number;
+    inflows: number;
+    outflows: number;
+    net: number;
+    types: Set<string>;
+    sections: Set<string>;
+    currencies: Set<string>;
+  }> = {};
+
+  for (const event of events) {
+    if (META_TYPES.has(event.type)) continue;
+    const amount = signedAmount(event);
+    if (amount === undefined) continue;
+
+    const category = String(event.data.category ?? event.type);
+    const bucket = buckets[category] ?? {
+      count: 0,
+      inflows: 0,
+      outflows: 0,
+      net: 0,
+      types: new Set<string>(),
+      sections: new Set<string>(),
+      currencies: new Set<string>(),
+    };
+
+    bucket.count++;
+    if (amount >= 0) bucket.inflows = round2(bucket.inflows + amount);
+    else bucket.outflows = round2(bucket.outflows + Math.abs(amount));
+    bucket.net = round2(bucket.net + amount);
+    bucket.types.add(event.type);
+    bucket.sections.add(classifyEventSection(event));
+    bucket.currencies.add(String(event.data.currency ?? "UNKNOWN"));
+    buckets[category] = bucket;
+  }
+
+  return Object.fromEntries(
+    Object.entries(buckets)
+      .sort((left, right) => Math.abs(right[1].net) - Math.abs(left[1].net) || left[0].localeCompare(right[0]))
+      .map(([category, bucket]) => [
+        category,
+        {
+          count: bucket.count,
+          inflows: bucket.inflows,
+          outflows: bucket.outflows,
+          net: bucket.net,
+          types: [...bucket.types].sort(),
+          sections: [...bucket.sections].sort(),
+          currencies: [...bucket.currencies].sort(),
+        },
+      ]),
+  );
+}
+
 export function topCategoryEntries(section: Record<string, number>, limit = 5): Array<{ category: string; total: number }> {
   return Object.entries(section)
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]) || a[0].localeCompare(b[0]))

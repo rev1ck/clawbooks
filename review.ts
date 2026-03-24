@@ -5,14 +5,59 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+export type Reclassification = {
+  new_category: string | null;
+  new_type: string | null;
+  reason: string | null;
+  ts: string;
+};
+
+export function buildReclassificationIndex(events: LedgerEvent[]): Record<string, Reclassification> {
+  const index: Record<string, Reclassification> = {};
+  for (const e of events) {
+    if (e.type !== "reclassify" || !e.data.original_id) continue;
+    index[String(e.data.original_id)] = {
+      new_category: typeof e.data.new_category === "string" && e.data.new_category.trim()
+        ? String(e.data.new_category)
+        : null,
+      new_type: typeof e.data.new_type === "string" && e.data.new_type.trim()
+        ? String(e.data.new_type)
+        : null,
+      reason: typeof e.data.reason === "string" && e.data.reason.trim()
+        ? String(e.data.reason)
+        : null,
+      ts: e.ts,
+    };
+  }
+  return index;
+}
+
 export function buildReclassifyMap(events: LedgerEvent[]): Record<string, string> {
   const reclassifyMap: Record<string, string> = {};
-  for (const e of events) {
-    if (e.type === "reclassify" && e.data.original_id && e.data.new_category) {
-      reclassifyMap[String(e.data.original_id)] = String(e.data.new_category);
-    }
+  const index = buildReclassificationIndex(events);
+  for (const [originalId, reclassification] of Object.entries(index)) {
+    if (reclassification.new_category) reclassifyMap[originalId] = reclassification.new_category;
   }
   return reclassifyMap;
+}
+
+export function applyReclassification(event: LedgerEvent, index: Record<string, Reclassification>): LedgerEvent {
+  const reclassification = index[event.id];
+  if (!reclassification) return event;
+
+  const data = { ...event.data };
+  if (reclassification.new_category) data.category = reclassification.new_category;
+
+  return {
+    ...event,
+    type: reclassification.new_type ?? event.type,
+    data,
+  };
+}
+
+export function applyReclassifications(events: LedgerEvent[], all: LedgerEvent[]): LedgerEvent[] {
+  const index = buildReclassificationIndex(all);
+  return events.map((event) => applyReclassification(event, index));
 }
 
 export function buildConfirmedSet(events: LedgerEvent[]): Set<string> {

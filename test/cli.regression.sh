@@ -261,6 +261,10 @@ HELP_IMPORT="$EMPTY_DIR3/help-import.txt"
 (cd "$EMPTY_DIR3" && $CLI import check --help 2>&1) > "$HELP_IMPORT"
 grep -q 'Usage: clawbooks import check' "$HELP_IMPORT" || { echo "FAIL: import check --help should print command help"; exit 1; }
 
+HELP_IMPORT_RUN="$EMPTY_DIR3/help-import-run.txt"
+(cd "$EMPTY_DIR3" && $CLI import run --help 2>&1) > "$HELP_IMPORT_RUN"
+grep -q 'Usage: clawbooks import run' "$HELP_IMPORT_RUN" || { echo "FAIL: import run --help should print command help"; exit 1; }
+
 HELP_IMPORT_MAPPINGS="$EMPTY_DIR3/help-import-mappings.txt"
 (cd "$EMPTY_DIR3" && $CLI import mappings --help 2>&1) > "$HELP_IMPORT_MAPPINGS"
 grep -q 'Usage: clawbooks import mappings' "$HELP_IMPORT_MAPPINGS" || { echo "FAIL: import mappings --help should print command help"; exit 1; }
@@ -375,6 +379,23 @@ IMPORT_MAPPINGS_CHECK="$IMPORT_ROOT/import-mappings-check.json"
 grep -q '"command": "import mappings check"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should identify itself"; exit 1; }
 grep -q '"file_checks"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should report file checks"; exit 1; }
 grep -q '"event_diagnostics"' "$IMPORT_MAPPINGS_CHECK" || { echo "FAIL: import mappings check should report event diagnostics"; exit 1; }
+
+IMPORT_MAPPINGS_LOOKUP="$IMPORT_ROOT/import-mappings-lookup.json"
+(cd "$IMPORT_ROOT" && $CLI import mappings lookup "NETFLIX" --source statement_import 2>&1) > "$IMPORT_MAPPINGS_LOOKUP"
+grep -q '"command": "import mappings lookup"' "$IMPORT_MAPPINGS_LOOKUP" || { echo "FAIL: import mappings lookup should identify itself"; exit 1; }
+grep -q '"stable_summary"' "$IMPORT_MAPPINGS_LOOKUP" || { echo "FAIL: import mappings lookup should report stable history when present"; exit 1; }
+
+cat > "$IMPORT_ROOT/statement.csv" <<'EOF'
+posting_date,transaction_date,description,debit,credit,balance,currency,reference
+2026-03-18,2026-03-17,APPLE.COM/BILL,300,,900,USD,row-2
+2026-03-05,2026-03-04,PAYROLL,,200,1200,USD,row-1
+EOF
+IMPORT_RUN_JSON="$IMPORT_ROOT/import-run.json"
+(cd "$IMPORT_ROOT" && $CLI import run statement.csv --statement statement-profile.json --append 2>&1) > "$IMPORT_RUN_JSON"
+grep -q '"command": "import run"' "$IMPORT_RUN_JSON" || { echo "FAIL: import run should identify itself"; exit 1; }
+grep -q '"emitted_event_count": 2' "$IMPORT_RUN_JSON" || { echo "FAIL: import run should emit two staged events"; exit 1; }
+grep -q '"append"' "$IMPORT_RUN_JSON" || { echo "FAIL: import run should report append results"; exit 1; }
+test -f "$IMPORT_ROOT/statement.staged.jsonl" || { echo "FAIL: import run should write a staged JSONL file by default"; exit 1; }
 
 cat > "$IMPORT_ROOT/staged-newest-first.jsonl" <<'EOF'
 {"ts":"2026-03-18T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-300,"currency":"USD","transaction_date":"2026-03-17","posting_date":"2026-03-18"}}
@@ -638,5 +659,33 @@ test -f "$PACK_OUT/corrections.csv" || { echo "FAIL: pack should include correct
 test -f "$PACK_OUT/confirmations.csv" || { echo "FAIL: pack should include confirmations.csv"; exit 1; }
 grep -q '"reporting_mode": "provisional"' "$PACK_OUT/summary.json" || { echo "FAIL: pack summary should mark provisional reporting mode when override is used"; exit 1; }
 rm -rf "$DOCS_ROOT"
+
+RECLASS_ROOT="$(mktemp -d)"
+mkdir -p "$RECLASS_ROOT/.books"
+cat > "$RECLASS_ROOT/.books/policy.md" <<'EOF'
+# test policy
+EOF
+cat > "$RECLASS_ROOT/.books/ledger.jsonl" <<'EOF'
+{"ts":"2026-03-01T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-100,"currency":"USD","category":"hosting","description":"Hosting charge","confidence":"clear"},"id":"host1","prev":"genesis"}
+{"ts":"2026-03-02T00:00:00.000Z","source":"bank","type":"refund_received","data":{"amount":20,"currency":"USD","category":"hosting","description":"Hosting refund","confidence":"clear"},"id":"host2","prev":"x"}
+{"ts":"2026-03-03T00:00:00.000Z","source":"exchange","type":"transfer_in","data":{"amount":150,"currency":"USD","category":"internal_transfer","description":"VALR settlement","confidence":"clear"},"id":"valr1","prev":"y"}
+{"ts":"2026-03-04T00:00:00.000Z","source":"manual","type":"reclassify","data":{"original_id":"valr1","new_category":"valr_income","new_type":"income","reason":"trading proceeds"},"id":"reclass1","prev":"z"}
+EOF
+RECLASS_SUMMARY="$RECLASS_ROOT/summary.json"
+(cd "$RECLASS_ROOT" && $CLI summary 2026-03 2>&1) > "$RECLASS_SUMMARY"
+node - <<'EOF' "$RECLASS_SUMMARY"
+const fs = require("fs");
+const summary = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+assert(summary.report_sections.operating_income.valr_income === 150, "reclassified new_type should move VALR item into operating income");
+assert(summary.report_totals.internal_transfers_in === 0, "reclassified new_type should remove VALR item from internal transfers");
+assert(summary.category_rollup.hosting.outflows === 100, "category rollup should keep gross hosting outflows");
+assert(summary.category_rollup.hosting.inflows === 20, "category rollup should keep hosting refunds visible as inflows");
+assert(summary.category_rollup.hosting.net === -80, "category rollup should net hosting charges against refunds");
+console.log("reclassification/category rollup: ok");
+EOF
+rm -rf "$RECLASS_ROOT"
 
 echo "books-resolution tests: ok"

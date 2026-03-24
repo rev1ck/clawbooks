@@ -90,6 +90,8 @@ Setup:
                                       Create a books directory with ledger + starter policy
   import      scaffold <kind> [flags]
                                       Emit editable import mapper templates (mjs + python)
+  import      run <statement.csv> [flags]
+                                      Turn predictable statement CSVs into staged JSONL
   import      check <events.jsonl> [flags]
                                       Validate a staged import file before append
   import      mappings <action> [flags]
@@ -109,8 +111,10 @@ Import:
   record  <json>              Append one event to the ledger
   batch                       Append JSONL events from stdin
   import scaffold --list      List available import scaffolds
+  import run statement.csv    Stage a predictable statement CSV without hand-writing a mapper
   import check staged.jsonl   Check a staged JSONL import against explicit expectations
   import mappings suggest     Suggest recurring vendor hints from ledger history
+  import mappings lookup X    Explain how a description matches current mappings/history
   import sessions list        List saved import-session records
 
 Inspect:
@@ -161,8 +165,10 @@ Quick examples:
   clawbooks init
   clawbooks import scaffold --list
   clawbooks import scaffold statement-csv
+  clawbooks import run statement.csv --statement statement-profile.json
   clawbooks import check staged.jsonl --statement statement-profile.json --save-session
   clawbooks import mappings suggest --source statement_import
+  clawbooks import mappings lookup "NETFLIX"
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
   clawbooks import reconcile staged.jsonl --statement statement-profile.json
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
@@ -241,6 +247,11 @@ Import check notes:
   --mappings <file>           Use an explicit vendor-mappings.json file for factual consistency checks
                               If omitted, clawbooks checks scaffold-local paths and .books/vendor-mappings.json
 
+Import run notes:
+  Auto-detects common statement columns such as posting_date, transaction_date,
+  description, amount, debit, credit, balance, currency, and ref.
+  Use explicit --*-col flags when the source header names differ.
+
 Vendor mapping notes:
   Vendor mappings are optional operator-maintained hints for recurring descriptions.
   They do not override policy.md and are never applied silently by the CLI.
@@ -269,6 +280,7 @@ function commandHelp(cmd?: string, args: string[] = []): string | null {
   const sub = args[0];
   const key = cmd === "import" && sub === "check" ? "import-check"
     : cmd === "import" && sub === "scaffold" ? "import-scaffold"
+    : cmd === "import" && sub === "run" ? "import-run"
     : cmd === "import" && sub === "mappings" ? "import-mappings"
     : cmd === "import" && sub === "sessions" ? "import-sessions"
     : cmd === "import" && sub === "reconcile" ? "import-reconcile"
@@ -295,6 +307,16 @@ Scaffold output also reports whether the current run is policy_grounded or provi
 Examples:
   clawbooks import scaffold statement-csv
   clawbooks import scaffold generic-csv --out ./imports/generic`,
+    "import-run": `Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [flags]
+
+Turn a predictable statement CSV into staged JSONL without writing a custom mapper first.
+Auto-detects common statement columns and lets you override them explicitly with --*-col flags.
+If you pass --statement, clawbooks also runs import-check against the staged output.
+
+Examples:
+  clawbooks import run statement.csv
+  clawbooks import run statement.csv --statement statement-profile.json
+  clawbooks import run statement.csv --statement statement-profile.json --append`,
     "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID] [--classification-basis BASIS]
 
 Validate staged JSONL before append. --statement loads explicit expectations such as:
@@ -311,13 +333,14 @@ Examples:
   clawbooks import check staged.jsonl --statement statement-profile.json
   clawbooks import check staged.jsonl --statement statement-profile.json --save-session
   clawbooks import check staged.jsonl --statement statement-profile.json --classification-basis heuristic_pattern`,
-    "import-mappings": `Usage: clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]
+    "import-mappings": `Usage: clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]
 
 Work with optional vendor-mappings.json files as factual recurring-description hints.
 
 Examples:
   clawbooks import mappings suggest --source statement_import
-  clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json`,
+  clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
+  clawbooks import mappings lookup "NETFLIX"`,
     "import-sessions": `Usage: clawbooks import sessions <list|show> [session-id|latest]
 
 Inspect saved import-session sidecars written by \`clawbooks import check --save-session\`.

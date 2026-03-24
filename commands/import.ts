@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { positional, flags } from "../cli-helpers.js";
 import { type DateBasis } from "../imports.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
@@ -10,14 +10,20 @@ import {
   duplicateRefs,
   eventCountsByType,
   mappingDiagnostics,
+  matchingMapping,
+  normalizeVendorText,
   orderingProfile,
+  prepareBatch,
   provenanceCoverage,
+  stableHistorySummary,
   suggestMappings,
+  topEntry,
   validateMappingsFile,
+  vendorHistory,
   type StatementProfile,
   type VendorMapping,
 } from "../operations.js";
-import { buildWorkflowStatus } from "../workflow-state.js";
+import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode } from "../workflow-state.js";
 
 type ImportParams = {
   booksDir: string | null;
@@ -25,6 +31,16 @@ type ImportParams = {
 };
 
 type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch";
+
+type ImportRunField = "transaction_date" | "posting_date" | "description" | "debit" | "credit" | "amount" | "balance" | "currency" | "ref" | "category" | "type" | "confidence";
+
+type ImportRunColumns = Record<ImportRunField, string | null>;
+
+type ParsedCsv = {
+  delimiter: string;
+  headers: string[];
+  rows: Array<Record<string, string>>;
+};
 
 type ImportSessionRecord = {
   import_session: string;
@@ -69,6 +85,21 @@ type ImportSessionRecord = {
 };
 
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
+
+const IMPORT_RUN_ALIASES: Record<ImportRunField, string[]> = {
+  transaction_date: ["transaction_date", "transaction date", "date", "trans date", "transactiondate"],
+  posting_date: ["posting_date", "posting date", "posted_date", "posted date", "post date", "valuedate", "value date"],
+  description: ["description", "memo", "details", "narrative", "payee", "merchant", "name"],
+  debit: ["debit", "debits", "withdrawal", "outflow"],
+  credit: ["credit", "credits", "deposit", "inflow"],
+  amount: ["amount", "signed_amount", "signed amount", "value"],
+  balance: ["balance", "running_balance", "running balance"],
+  currency: ["currency", "ccy"],
+  ref: ["ref", "reference", "transaction_id", "transaction id", "id"],
+  category: ["category", "source_category", "source category"],
+  type: ["type", "event_type", "event type"],
+  confidence: ["confidence"],
+};
 
 function readVendorMappings(path: string | null): { path: string | null; mappings: VendorMapping[]; issues: string[] } {
   if (!path) return { path: null, mappings: [], issues: [] };
@@ -195,6 +226,191 @@ function vendorMappingsTemplate(): string {
 function defaultOutDir(kind: ScaffoldKind, booksDir: string | null): string {
   if (booksDir && existsSync(booksDir)) return resolve(booksDir, "imports", kind);
   return resolve("clawbooks-imports", kind);
+}
+
+function defaultStagedOutPath(inputPath: string): string {
+  const resolved = resolve(inputPath);
+  const ext = extname(resolved);
+  const stem = ext ? basename(resolved, ext) : basename(resolved);
+  return resolve(dirname(resolved), `${stem}.staged.jsonl`);
+}
+
+function normalizeHeader(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function parseDelimited(text: string, delimiter: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        cell += "\"";
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") i++;
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function detectDelimiter(text: string): string {
+  const sample = text.split(/\r?\n/).slice(0, 5).join("\n");
+  const candidates = [",", ";", "\t"];
+  const scored = candidates.map((candidate) => {
+    const rows = parseDelimited(sample, candidate);
+    const score = rows[0]?.length ?? 0;
+    return { candidate, score };
+  }).sort((left, right) => right.score - left.score);
+  return scored[0]?.score && scored[0].score > 1 ? scored[0].candidate : ",";
+}
+
+function parseCsvFile(path: string, delimiterFlag?: string): ParsedCsv {
+  if (!existsSync(path)) {
+    console.error(`No file found at ${path}`);
+    process.exit(1);
+  }
+
+  const text = readFileSync(path, "utf-8").replace(/^\uFEFF/, "").trim();
+  if (!text) {
+    console.error(`CSV file is empty: ${path}`);
+    process.exit(1);
+  }
+
+  const delimiter = delimiterFlag ?? detectDelimiter(text);
+  const rows = parseDelimited(text, delimiter).filter((row) => row.some((cell) => cell.trim() !== ""));
+  if (rows.length < 2) {
+    console.error(`CSV file must contain a header and at least one data row: ${path}`);
+    process.exit(1);
+  }
+
+  const headers = rows[0].map((header) => header.trim());
+  return {
+    delimiter,
+    headers,
+    rows: rows.slice(1).map((cells, index) => {
+      const row = Object.fromEntries(headers.map((header, cellIndex) => [header, (cells[cellIndex] ?? "").trim()]));
+      row.__row = String(index + 2);
+      return row;
+    }),
+  };
+}
+
+function parseSignedNumber(value: string | null | undefined): number | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+
+  const negative = /^\(.*\)$/.test(trimmed);
+  const normalized = trimmed
+    .replace(/^\((.*)\)$/, "$1")
+    .replace(/[$£€¥\s]/g, "")
+    .replace(/,/g, "");
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return negative ? -parsed : parsed;
+}
+
+function coerceIsoDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("T")) return trimmed;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00.000Z`;
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(trimmed)) return `${trimmed.replace(/\//g, "-")}T00:00:00.000Z`;
+  return null;
+}
+
+function resolveImportRunColumn(
+  headers: string[],
+  explicitName: string | undefined,
+  field: ImportRunField,
+): string | null {
+  if (explicitName) {
+    const found = headers.find((header) => header === explicitName);
+    if (!found) {
+      console.error(`Column "${explicitName}" was not found in the CSV header for ${field}.`);
+      process.exit(1);
+    }
+    return found;
+  }
+
+  const aliases = IMPORT_RUN_ALIASES[field];
+  const normalizedHeaders = headers.map((header) => ({ header, normalized: normalizeHeader(header) }));
+  const match = normalizedHeaders.find(({ normalized }) => aliases.includes(normalized));
+  return match?.header ?? null;
+}
+
+function resolveImportRunColumns(headers: string[], f: Record<string, string>): ImportRunColumns {
+  return {
+    transaction_date: resolveImportRunColumn(headers, f["transaction-date-col"], "transaction_date"),
+    posting_date: resolveImportRunColumn(headers, f["posting-date-col"], "posting_date"),
+    description: resolveImportRunColumn(headers, f["description-col"], "description"),
+    debit: resolveImportRunColumn(headers, f["debit-col"], "debit"),
+    credit: resolveImportRunColumn(headers, f["credit-col"], "credit"),
+    amount: resolveImportRunColumn(headers, f["amount-col"], "amount"),
+    balance: resolveImportRunColumn(headers, f["balance-col"], "balance"),
+    currency: resolveImportRunColumn(headers, f["currency-col"], "currency"),
+    ref: resolveImportRunColumn(headers, f["ref-col"], "ref"),
+    category: resolveImportRunColumn(headers, f["category-col"], "category"),
+    type: resolveImportRunColumn(headers, f["type-col"], "type"),
+    confidence: resolveImportRunColumn(headers, f["confidence-col"], "confidence"),
+  };
+}
+
+function rowValue(row: Record<string, string>, column: string | null): string | null {
+  if (!column) return null;
+  const value = row[column];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function inferRowAmount(row: Record<string, string>, columns: ImportRunColumns): number | null {
+  const directAmount = parseSignedNumber(rowValue(row, columns.amount));
+  if (directAmount !== null) return directAmount;
+
+  const debit = parseSignedNumber(rowValue(row, columns.debit));
+  const credit = parseSignedNumber(rowValue(row, columns.credit));
+  if (debit === null && credit === null) return null;
+  return Math.round(((credit ?? 0) - Math.abs(debit ?? 0)) * 100) / 100;
+}
+
+function detectInputOrder(rows: Array<Record<string, string>>, columns: ImportRunColumns): "newest-first" | "oldest-first" | "unknown" {
+  if (rows.length < 2) return "unknown";
+  const first = coerceIsoDate(rowValue(rows[0], columns.posting_date) ?? rowValue(rows[0], columns.transaction_date));
+  const last = coerceIsoDate(rowValue(rows[rows.length - 1], columns.posting_date) ?? rowValue(rows[rows.length - 1], columns.transaction_date));
+  if (!first || !last || first === last) return "unknown";
+  return first > last ? "newest-first" : "oldest-first";
 }
 
 function scaffoldReadme(kind: ScaffoldKind): string {
@@ -704,6 +920,250 @@ export function cmdImport(args: string[], params: ImportParams) {
     policyPath: join(dirname(resolve(params.ledgerPath)), "policy.md"),
   });
 
+  if (p[0] === "run") {
+    const inputPath = p[1];
+    if (!inputPath) {
+      console.error("Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [--mappings PATH] [--source NAME] [--currency CUR] [--order auto|newest-first|oldest-first] [--transaction-date-col COL] [--posting-date-col COL] [--description-col COL] [--amount-col COL] [--debit-col COL] [--credit-col COL] [--balance-col COL] [--ref-col COL] [--category-col COL] [--type-col COL] [--confidence-col COL] [--classification-basis BASIS] [--save-session]");
+      process.exit(1);
+    }
+
+    const parsedCsv = parseCsvFile(resolve(inputPath), f.delimiter);
+    const columns = resolveImportRunColumns(parsedCsv.headers, f);
+    if (!columns.posting_date && !columns.transaction_date) {
+      console.error("import run needs a posting date or transaction date column. Use --posting-date-col or --transaction-date-col if auto-detection misses it.");
+      process.exit(1);
+    }
+    if (!columns.amount && !columns.debit && !columns.credit) {
+      console.error("import run needs either an amount column or debit/credit columns.");
+      process.exit(1);
+    }
+    if (!columns.description) {
+      console.error("import run needs a description column. Use --description-col if auto-detection misses it.");
+      process.exit(1);
+    }
+
+    const profile = f.statement ? readStatementProfile(resolve(f.statement)) : {};
+    const orderFlag = f.order ?? "auto";
+    if (!["auto", "newest-first", "oldest-first"].includes(orderFlag)) {
+      console.error("Invalid --order. Use auto, newest-first, or oldest-first.");
+      process.exit(1);
+    }
+
+    const mappingsResolution = resolveVendorMappingsPaths(f.mappings, f.statement, inputPath, params.booksDir);
+    const loadedMappings = readVendorMappings(mappingsResolution.used);
+    const detectedOrder = detectInputOrder(parsedCsv.rows, columns);
+    const targetOrder = orderFlag === "auto"
+      ? (profile.newest_first === true ? "newest-first" : "oldest-first")
+      : orderFlag;
+    const orderedRows = detectedOrder !== "unknown" && detectedOrder !== targetOrder
+      ? parsedCsv.rows.slice().reverse()
+      : parsedCsv.rows.slice();
+    const issues: string[] = [];
+    const stagedEvents: Array<Record<string, unknown>> = [];
+
+    for (const row of orderedRows) {
+      const amount = inferRowAmount(row, columns);
+      if (amount === null) continue;
+
+      const transactionDate = rowValue(row, columns.transaction_date);
+      const postingDate = rowValue(row, columns.posting_date);
+      const ts = coerceIsoDate(postingDate ?? transactionDate);
+      if (!ts) {
+        issues.push(`Row ${row.__row}: could not coerce posting/transaction date into ISO form.`);
+        continue;
+      }
+
+      const description = rowValue(row, columns.description) ?? "";
+      const mapping = matchingMapping(description, loadedMappings.mappings);
+      const explicitType = rowValue(row, columns.type);
+      const explicitCategory = rowValue(row, columns.category);
+      const explicitConfidence = rowValue(row, columns.confidence);
+      const currency = rowValue(row, columns.currency) ?? f.currency ?? profile.currency ?? "USD";
+      const balance = parseSignedNumber(rowValue(row, columns.balance));
+      const ref = rowValue(row, columns.ref);
+      const type = mapping?.type ?? explicitType ?? (amount >= 0 ? "income" : "expense");
+      const category = mapping?.category ?? explicitCategory ?? "uncategorized";
+      const confidence = mapping?.confidence ?? explicitConfidence ?? "inferred";
+
+      stagedEvents.push({
+        ts,
+        source: f.source ?? profile.source ?? "statement_import",
+        type,
+        data: {
+          amount,
+          currency,
+          description,
+          category,
+          confidence,
+          ...(ref ? { ref } : {}),
+          transaction_date: transactionDate,
+          posting_date: postingDate,
+          balance,
+          source_doc: resolve(inputPath),
+          source_row: row.__row,
+          provenance: {
+            import_kind: "statement-csv",
+            runner: "clawbooks import run",
+            row_snapshot: row,
+          },
+        },
+      });
+    }
+
+    const outPath = resolve(f.out ?? defaultStagedOutPath(inputPath));
+    const stagedText = stagedEvents.map((event) => JSON.stringify(event)).join("\n") + (stagedEvents.length ? "\n" : "");
+    writeFileSync(outPath, stagedText, "utf-8");
+
+    let checkReport: Record<string, unknown> | null = null;
+    if (f.statement) {
+      const dateBasis = (f["date-basis"] ?? profile.date_basis ?? "ledger") as DateBasis;
+      if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
+        console.error("Invalid --date-basis. Use ledger, transaction, or posting.");
+        process.exit(1);
+      }
+      checkReport = buildImportCheck({
+        inputPath: outPath,
+        statementProfilePath: resolve(f.statement),
+        rawEvents: readEventsFile(outPath),
+        ledgerHistoryEvents: existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [],
+        workflow,
+        profile,
+        dateBasis,
+        currency: f.currency,
+        sourceFilter: f.source ?? null,
+        mappings: {
+          checkedPaths: mappingsResolution.checked,
+          path: loadedMappings.path,
+          issues: loadedMappings.issues,
+          mappings: loadedMappings.mappings,
+        },
+        classificationBasis: f["classification-basis"],
+        mapperPath: null,
+        recordedBy: f["recorded-by"] ?? null,
+        statementStart: f["statement-start"],
+        statementEnd: f["statement-end"],
+      }) as unknown as Record<string, unknown>;
+
+      if (f["save-session"] === "true") {
+        const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+        const sessionsDir = sessionsDirFor(params.booksDir, params.ledgerPath);
+        mkdirSync(sessionsDir, { recursive: true });
+        const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
+        const report = checkReport as unknown as ImportSessionRecord & Record<string, unknown>;
+        const sessionRecord: ImportSessionRecord = {
+          import_session: sessionId,
+          session_schema_version: "clawbooks.import-session.v1",
+          created_at: new Date().toISOString(),
+          recorded_via: "clawbooks import run",
+          operator_identity: f["recorded-by"] ?? null,
+          notes: f.notes ?? null,
+          mapper_path: null,
+          scaffold_kind: "statement-csv",
+          input_path: resolve(inputPath),
+          statement_profile_path: resolve(f.statement),
+          status: String(report.status ?? "ok"),
+          reporting_mode: String(report.reporting_mode ?? workflow.reporting_mode),
+          classification_basis: String(report.classification_basis ?? workflow.classification_basis),
+          workflow_acknowledged: workflow.reporting_readiness === "ready",
+          workflow_state_path: workflow.state_path,
+          program_path: workflow.program.path,
+          policy_path: workflow.policy.path,
+          program_hash: workflow.program.sha256,
+          policy_hash: workflow.policy.sha256,
+          date_basis: String(report.date_basis ?? profile.date_basis ?? "ledger"),
+          currency: typeof report.currency === "string" ? report.currency : null,
+          workflow_state: String(report.workflow_state ?? workflow.workflow_state),
+          expected: (report.expected ?? {}) as Record<string, number | string>,
+          actual: (report.actual ?? {}) as Record<string, number | string | null>,
+          differences: (report.differences ?? {}) as Record<string, number>,
+          issue_count: Array.isArray(report.issues) ? report.issues.length : 0,
+          issues: Array.isArray(report.issues) ? report.issues as string[] : [],
+          source_coverage: (report.source_coverage ?? {}) as Record<string, unknown>,
+          input_event_count: Number(report.input_event_count ?? stagedEvents.length),
+          filtered_event_count: Number(report.filtered_event_count ?? stagedEvents.length),
+          scoped_event_count: Number(((report.source_coverage ?? {}) as Record<string, unknown>).scoped_events ?? 0),
+          provenance_coverage: report.provenance_coverage as ReturnType<typeof provenanceCoverage>,
+          date_coverage: report.date_coverage as ReturnType<typeof dateCoverage>,
+          mapping_diagnostics: (report.mapping_diagnostics ?? {}) as Record<string, unknown>,
+          ordering: report.ordering as { filtered: ReturnType<typeof orderingProfile>; scoped: ReturnType<typeof orderingProfile> },
+          duplicate_refs: Array.isArray(report.duplicate_refs) ? report.duplicate_refs as string[] : [],
+        };
+        writeFileSync(sessionPath, JSON.stringify(sessionRecord, null, 2) + "\n", "utf-8");
+      }
+    }
+
+    let appendResult: Record<string, unknown> | null = null;
+    if (f.append === "true") {
+      if (checkReport && checkReport.status !== "ok") {
+        console.error(`Refusing to append because import check returned status "${String(checkReport.status)}". Review ${outPath} and the reported issues first.`);
+        process.exit(1);
+      }
+
+      const classificationBasis = f["classification-basis"]
+        ?? (loadedMappings.mappings.length > 0 || Boolean(columns.category) || Boolean(columns.type) ? "heuristic_pattern"
+          : workflow.reporting_readiness === "ready" ? "policy_guided" : "manual_operator");
+      if (!VALID_CLASSIFICATION_BASES.has(classificationBasis)) {
+        console.error("Invalid --classification-basis. Use policy_explicit, policy_guided, heuristic_pattern, manual_operator, mixed, or unknown.");
+        process.exit(1);
+      }
+      const reportingMode = deriveReportingMode(workflow.reporting_readiness, classificationBasis);
+      const existingLines = existsSync(params.ledgerPath) ? readFileSync(params.ledgerPath, "utf-8").split("\n").filter(Boolean) : [];
+      const batch = prepareBatch({ input: stagedText, existingLines });
+      if (batch.newLines.length > 0) {
+        if (!existsSync(params.ledgerPath)) writeFileSync(params.ledgerPath, "", "utf-8");
+        appendFileSync(params.ledgerPath, batch.newLines.join("\n") + "\n", "utf-8");
+      }
+      appendResult = {
+        recorded: batch.recorded,
+        skipped: batch.skipped,
+        errors: batch.errors,
+        warnings: batch.warnings,
+        error_messages: batch.errorMessages,
+        reporting_mode: reportingMode,
+        classification_basis: classificationBasis,
+      };
+    }
+
+    console.log(JSON.stringify({
+      command: "import run",
+      workflow,
+      reporting_mode: workflow.reporting_mode,
+      classification_basis: workflow.classification_basis,
+      workflow_warning: workflow.warning,
+      status_line: workflow.reporting_mode === "policy_grounded"
+        ? "Status: POLICY_GROUNDED"
+        : "Status: PROVISIONAL",
+      input_path: resolve(inputPath),
+      out_path: outPath,
+      delimiter: parsedCsv.delimiter === "\t" ? "\\t" : parsedCsv.delimiter,
+      row_count: parsedCsv.rows.length,
+      emitted_event_count: stagedEvents.length,
+      issues,
+      source: f.source ?? profile.source ?? "statement_import",
+      detected_order: detectedOrder,
+      emitted_order: targetOrder,
+      columns,
+      mappings: {
+        path: loadedMappings.path,
+        checked_paths: mappingsResolution.checked,
+        mapping_count: loadedMappings.mappings.length,
+        issues: loadedMappings.issues,
+      },
+      check: checkReport,
+      append: appendResult,
+      next_steps: f.append === "true"
+        ? ["Run `clawbooks verify`, `clawbooks reconcile`, and `clawbooks review` after append."]
+        : [
+          `Review ${outPath} before append.`,
+          f.statement
+            ? "The import check report is included above."
+            : "Add --statement profile.json if you want row-count, balance, and ordering checks.",
+          `Append with \`clawbooks batch < ${outPath}\` or rerun with \`clawbooks import run ... --append\`.`,
+        ],
+    }, null, 2));
+    return;
+  }
+
   if (p[0] === "sessions") {
     const action = p[1] ?? "list";
     const files = listSessionFiles(params.booksDir, params.ledgerPath);
@@ -805,11 +1265,12 @@ export function cmdImport(args: string[], params: ImportParams) {
         actions: [
           { name: "suggest", description: "Suggest vendor mapping candidates from stable ledger history" },
           { name: "check", description: "Validate a mappings file and optionally compare it to staged events" },
+          { name: "lookup", description: "Explain how a description would match current mappings and history" },
         ],
       }, null, 2));
       return;
     }
-    const mappingsResolution = resolveVendorMappingsPaths(f.mappings, undefined, p[2], params.booksDir);
+    const mappingsResolution = resolveVendorMappingsPaths(f.mappings, undefined, action === "check" ? p[2] : undefined, params.booksDir);
     const loadedMappings = readVendorMappings(mappingsResolution.used);
     const ledgerEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
 
@@ -883,7 +1344,44 @@ export function cmdImport(args: string[], params: ImportParams) {
       return;
     }
 
-    console.error("Usage: clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
+    if (action === "lookup") {
+      const description = p.slice(2).join(" ").trim();
+      if (!description) {
+        console.error("Usage: clawbooks import mappings lookup <description> [--mappings PATH] [--source S]");
+        process.exit(1);
+      }
+      const history = f.source ? ledgerEvents.filter((event) => event.source === f.source) : ledgerEvents;
+      const normalizedVendor = normalizeVendorText(description);
+      const mapping = matchingMapping(description, loadedMappings.mappings);
+      const historyGroup = vendorHistory(history)[normalizedVendor];
+      const stable = historyGroup ? stableHistorySummary(historyGroup) : null;
+      console.log(JSON.stringify({
+        command: "import mappings lookup",
+        description,
+        normalized_vendor: normalizedVendor,
+        source: f.source ?? null,
+        mappings_path: loadedMappings.path,
+        mappings_paths_checked: mappingsResolution.checked,
+        matched_mapping: mapping,
+        historical_summary: historyGroup ? {
+          count: historyGroup.count,
+          stable_summary: stable,
+          top_description: topEntry(historyGroup.descriptions)?.value ?? null,
+          types: historyGroup.types,
+          categories: historyGroup.categories,
+          sources: historyGroup.sources,
+        } : null,
+        next_steps: [
+          mapping
+            ? "The current vendor mappings file already covers this description."
+            : "If this description recurs with a stable classification, consider adding it to vendor-mappings.json.",
+          "Use `clawbooks import mappings suggest` to surface broader recurring patterns from the ledger.",
+        ],
+      }, null, 2));
+      return;
+    }
+
+    console.error("Usage: clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
     process.exit(1);
   }
 
@@ -1004,7 +1502,7 @@ export function cmdImport(args: string[], params: ImportParams) {
   }
 
   if (p[0] !== "scaffold") {
-    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]\n       clawbooks import mappings <suggest|check> [events.jsonl] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
+    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]\n       clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append]\n       clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
     process.exit(1);
   }
 

@@ -25,6 +25,14 @@ This creates:
 `vendor-mappings.json` is optional. It stores recurring description hints that the mapper may consult. It does not replace `policy.md`.
 If you do not pass `--mappings`, `import check` first looks near the scaffold/profile path and also checks `.books/vendor-mappings.json`.
 
+Fast path for predictable CSVs:
+
+```bash
+clawbooks import run statement.csv --statement .books/imports/statement-csv/statement-profile.json
+```
+
+That stages `statement.staged.jsonl` next to the CSV and includes the import-check report in the command output.
+
 3. Edit the mapper to match the source columns.
 
 The default statement scaffold is shaped for common fields:

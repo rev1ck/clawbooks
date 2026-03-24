@@ -6,8 +6,8 @@ import { ASSET_EVENT_TYPES, DOCUMENT_TYPES, INFLOW_TYPES, META_TYPES, OUTFLOW_TY
 import { filterByDateBasis, type DateBasis } from "./imports.js";
 import { computeId, filter, hashLine, latestSnapshot, type LedgerEvent } from "./ledger.js";
 import { classifyPolicyReadiness, lintPolicyText } from "./policy.js";
-import { buildCorrectionSummary, buildConfirmedSet, buildReclassifyMap, buildReviewMateriality } from "./review.js";
-import { buildReportingSections, round2, sortByTimestamp } from "./reporting.js";
+import { applyReclassifications, buildCorrectionSummary, buildConfirmedSet, buildReclassifyMap, buildReviewMateriality } from "./review.js";
+import { buildCategoryRollup, buildReportingSections, round2, sortByTimestamp } from "./reporting.js";
 import { VALID_CLASSIFICATION_BASES, deriveReportingMode } from "./workflow-state.js";
 import type { ImportSessionSummary } from "./import-sessions.js";
 import type { buildWorkflowStatus } from "./workflow-state.js";
@@ -102,20 +102,23 @@ export function buildSnapshotData(opts: {
   before?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before }));
+  const effectiveEvents = applyReclassifications(events, opts.all);
   const balances: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
   let eventCount = 0;
-  const reporting = buildReportingSections(events);
+  const reporting = buildReportingSections(effectiveEvents);
+  const categoryRollup = buildCategoryRollup(effectiveEvents);
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
+    const effectiveEvent = effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
 
-    const amount = Number(event.data.amount);
+    const amount = Number(effectiveEvent.data.amount);
     if (Number.isNaN(amount)) continue;
 
     eventCount++;
-    const currency = String(event.data.currency ?? "UNKNOWN");
-    const category = String(event.data.category ?? event.type);
+    const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
+    const category = String(effectiveEvent.data.category ?? effectiveEvent.type);
 
     balances[currency] = round2((balances[currency] ?? 0) + amount);
     byCategory[category] = round2((byCategory[category] ?? 0) + amount);
@@ -126,6 +129,7 @@ export function buildSnapshotData(opts: {
     event_count: eventCount,
     balances,
     by_category: byCategory,
+    category_rollup: categoryRollup,
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
@@ -290,6 +294,7 @@ export function buildSummary(opts: {
   source?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before, source: opts.source }));
+  const effectiveEvents = applyReclassifications(events, opts.all);
   const nonMetaEvents = events.filter((event) => !META_TYPES.has(event.type));
   const firstEventTs = nonMetaEvents[0]?.ts ?? null;
   const lastEventTs = nonMetaEvents[nonMetaEvents.length - 1]?.ts ?? null;
@@ -301,31 +306,33 @@ export function buildSummary(opts: {
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0;
   let outflows = 0;
-  const reporting = buildReportingSections(events);
+  const reporting = buildReportingSections(effectiveEvents);
+  const categoryRollup = buildCategoryRollup(effectiveEvents);
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
+    const effectiveEvent = effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
 
-    const amount = Number(event.data.amount);
+    const amount = Number(effectiveEvent.data.amount);
     if (Number.isNaN(amount)) continue;
 
-    const category = reclassifyMap[event.id] ?? String(event.data.category ?? event.type);
+    const category = reclassifyMap[event.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
     const month = event.ts.slice(0, 7);
-    const currency = String(event.data.currency ?? "UNKNOWN");
+    const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
 
-    if (!byType[event.type]) byType[event.type] = { count: 0, total: 0 };
-    byType[event.type].count++;
-    byType[event.type].total = round2(byType[event.type].total + amount);
+    if (!byType[effectiveEvent.type]) byType[effectiveEvent.type] = { count: 0, total: 0 };
+    byType[effectiveEvent.type].count++;
+    byType[effectiveEvent.type].total = round2(byType[effectiveEvent.type].total + amount);
 
-    if (!byCategory[category]) byCategory[category] = { type: event.type, count: 0, total: 0 };
+    if (!byCategory[category]) byCategory[category] = { type: effectiveEvent.type, count: 0, total: 0 };
     byCategory[category].count++;
     byCategory[category].total = round2(byCategory[category].total + amount);
 
     if (!byMonth[month]) byMonth[month] = {};
-    byMonth[month][event.type] = round2((byMonth[month][event.type] ?? 0) + amount);
+    byMonth[month][effectiveEvent.type] = round2((byMonth[month][effectiveEvent.type] ?? 0) + amount);
 
     if (!bySource[event.source]) bySource[event.source] = { count: 0, total: 0 };
     bySource[event.source].count++;
@@ -366,6 +373,7 @@ export function buildSummary(opts: {
     by_month: byMonth,
     by_source: bySource,
     by_currency: byCurrency,
+    category_rollup: categoryRollup,
     cash_flow: {
       inflows: round2(inflows),
       outflows: round2(outflows),
@@ -1114,28 +1122,31 @@ export function buildPackData(opts: {
       ].join(",")),
     ].join("\n") + "\n";
 
+  const effectiveEvents = applyReclassifications(events, opts.all);
   const reclassifyMap = buildReclassifyMap(opts.all);
   const byType: Record<string, { count: number; total: number }> = {};
   const byCategory: Record<string, { count: number; total: number }> = {};
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0;
   let outflows = 0;
-  const reporting = buildReportingSections(events);
+  const reporting = buildReportingSections(effectiveEvents);
+  const categoryRollup = buildCategoryRollup(effectiveEvents);
   const settlements = buildDocumentSettlementData(events, opts.before ?? opts.generatedAt ?? new Date().toISOString());
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
+    const effectiveEvent = effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
-    const amount = Number(event.data.amount);
+    const amount = Number(effectiveEvent.data.amount);
     if (Number.isNaN(amount)) continue;
 
-    const category = reclassifyMap[event.id] ?? String(event.data.category ?? event.type);
-    const currency = String(event.data.currency ?? "UNKNOWN");
+    const category = reclassifyMap[event.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
+    const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
 
-    if (!byType[event.type]) byType[event.type] = { count: 0, total: 0 };
-    byType[event.type].count++;
-    byType[event.type].total = round2(byType[event.type].total + amount);
+    if (!byType[effectiveEvent.type]) byType[effectiveEvent.type] = { count: 0, total: 0 };
+    byType[effectiveEvent.type].count++;
+    byType[effectiveEvent.type].total = round2(byType[effectiveEvent.type].total + amount);
 
     if (!byCategory[category]) byCategory[category] = { count: 0, total: 0 };
     byCategory[category].count++;
@@ -1158,6 +1169,7 @@ export function buildPackData(opts: {
     by_type: byType,
     by_category: byCategory,
     by_currency: byCurrency,
+    category_rollup: categoryRollup,
     cash_flow: { inflows, outflows, net: round2(inflows + outflows) },
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,

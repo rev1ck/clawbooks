@@ -262,11 +262,13 @@ clawbooks import scaffold statement-csv
 clawbooks import scaffold generic-csv
 clawbooks import scaffold fills-csv
 clawbooks import scaffold manual-batch
+clawbooks import run statement.csv --statement statement-profile.json
 # edit mapper.mjs or mapper.py, then run it to emit JSONL
 clawbooks import check staged.jsonl --statement statement-profile.json --save-session
 clawbooks import check staged.jsonl --statement statement-profile.json --classification-basis heuristic_pattern
 clawbooks import sessions list
 clawbooks import mappings suggest --source statement_import
+clawbooks import mappings lookup "NETFLIX"
 clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
 clawbooks import reconcile staged.jsonl --statement statement-profile.json
 clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
@@ -279,6 +281,8 @@ cat events.jsonl | clawbooks batch --classification-basis manual_operator
 Those import sessions also preserve run-level grounding such as `classification_basis`, `program_hash`, `policy_hash`, and whether workflow acknowledgment was current at the time of validation.
 `import reconcile` produces a dedicated statement reconciliation artifact comparing staged rows, imported ledger rows, and declared statement expectations.
 `import check` also reports the resolved mappings discovery path order. If you do not pass `--mappings`, clawbooks checks the scaffold location and `.books/vendor-mappings.json`.
+`import run` is the fast path for predictable statement CSVs with stable column names. It stages JSONL, can run `import check` automatically when you pass `--statement`, and can append directly with `--append`.
+`import mappings lookup "<description>"` is the quick reference surface for seeing how a name would match the current mappings file and whether the ledger already has a stable historical classification for it.
 When practical, ingest full source coverage first and use periods/ranges later for reporting and checking.
 
 Inspect:
@@ -299,7 +303,8 @@ If you are starting from scratch, the fastest path is usually:
 clawbooks init
 clawbooks quickstart
 clawbooks import scaffold statement-csv
-clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+clawbooks import run statement.csv --statement statement-profile.json
+clawbooks import check statement.staged.jsonl --statement statement-profile.json --save-session
 ```
 
 For a full statement-shaped walkthrough, see [docs/statement-import-example.md](./docs/statement-import-example.md).

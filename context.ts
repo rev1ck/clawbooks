@@ -1,10 +1,11 @@
 import type { LedgerEvent } from "./ledger.js";
 import { META_TYPES } from "./event-types.js";
 import { buildDocumentSettlementData } from "./documents.js";
-import { buildCorrectionSummary, buildReclassifyMap, buildReviewMateriality, reviewCounts } from "./review.js";
-import { buildReportingSections, round2, topCategoryEntries } from "./reporting.js";
+import { applyReclassifications, buildCorrectionSummary, buildReclassifyMap, buildReviewMateriality, reviewCounts } from "./review.js";
+import { buildCategoryRollup, buildReportingSections, round2, topCategoryEntries } from "./reporting.js";
 
 export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
+  const effectiveEvents = applyReclassifications(events, all);
   const reclassifyMap = buildReclassifyMap(all);
   const byType: Record<string, { count: number; total: number }> = {};
   const bySource: Record<string, { count: number; total: number }> = {};
@@ -17,22 +18,24 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
   let outflows = 0;
   let nonMetaEvents = 0;
   let rawReclassifications = 0;
-  const reporting = buildReportingSections(events);
+  const reporting = buildReportingSections(effectiveEvents);
+  const categoryRollup = buildCategoryRollup(effectiveEvents);
 
-  for (const e of events) {
-    eventTypes.add(e.type);
+  for (const [index, e] of events.entries()) {
+    const effectiveEvent = effectiveEvents[index];
+    eventTypes.add(e.type === "reclassify" ? e.type : effectiveEvent.type);
     sources.add(e.source);
     if (e.type === "reclassify") rawReclassifications++;
     if (META_TYPES.has(e.type)) continue;
 
     nonMetaEvents++;
-    const amount = Number(e.data.amount);
-    const currency = String(e.data.currency ?? "UNKNOWN");
-    const category = reclassifyMap[e.id] ?? String(e.data.category ?? e.type);
+    const amount = Number(effectiveEvent.data.amount);
+    const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
+    const category = reclassifyMap[e.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
     currencies.add(currency);
 
-    if (!byType[e.type]) byType[e.type] = { count: 0, total: 0 };
-    byType[e.type].count++;
+    if (!byType[effectiveEvent.type]) byType[effectiveEvent.type] = { count: 0, total: 0 };
+    byType[effectiveEvent.type].count++;
 
     if (!bySource[e.source]) bySource[e.source] = { count: 0, total: 0 };
     bySource[e.source].count++;
@@ -45,7 +48,7 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
 
     if (isNaN(amount)) continue;
 
-    byType[e.type].total = round2(byType[e.type].total + amount);
+    byType[effectiveEvent.type].total = round2(byType[effectiveEvent.type].total + amount);
     bySource[e.source].total = round2(bySource[e.source].total + amount);
     byCurrency[currency].total = round2(byCurrency[currency].total + amount);
     byCategory[category].total = round2(byCategory[category].total + amount);
@@ -71,6 +74,7 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
     by_source: bySource,
     by_currency: byCurrency,
     by_category: byCategory,
+    category_rollup: categoryRollup,
     cash_flow: {
       inflows: round2(inflows),
       outflows: round2(outflows),
