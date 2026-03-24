@@ -7,7 +7,7 @@ import { filterByDateBasis, type DateBasis } from "./imports.js";
 import { computeId, filter, hashLine, latestSnapshot, type LedgerEvent } from "./ledger.js";
 import { classifyPolicyReadiness, lintPolicyText } from "./policy.js";
 import { applyReclassifications, buildCorrectionSummary, buildConfirmedSet, buildReclassifyMap, buildReviewMateriality } from "./review.js";
-import { buildCategoryRollup, buildReportingSections, round2, sortByTimestamp } from "./reporting.js";
+import { buildBaseCurrencySummary, buildCategoryRollup, buildFxCoverage, buildReportingSections, convertedAmountWarnings, round2, sortByTimestamp } from "./reporting.js";
 import { VALID_CLASSIFICATION_BASES, deriveReportingMode } from "./workflow-state.js";
 import type { ImportSessionSummary } from "./import-sessions.js";
 import type { buildWorkflowStatus } from "./workflow-state.js";
@@ -292,6 +292,7 @@ export function buildSummary(opts: {
   after?: string;
   before?: string;
   source?: string;
+  baseCurrency?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before, source: opts.source }));
   const effectiveEvents = applyReclassifications(events, opts.all);
@@ -311,6 +312,9 @@ export function buildSummary(opts: {
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
+  const fxCoverage = opts.baseCurrency ? buildFxCoverage(effectiveEvents, opts.baseCurrency) : null;
+  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(effectiveEvents, opts.baseCurrency) : null;
+  const fxWarnings = fxCoverage ? convertedAmountWarnings(fxCoverage) : [];
 
   for (const [index, event] of events.entries()) {
     const effectiveEvent = effectiveEvents[index];
@@ -389,6 +393,8 @@ export function buildSummary(opts: {
     top_open_documents: settlements.items.slice(0, 10),
     review_materiality: reviewMateriality,
     correction_summary: correctionSummary,
+    ...(baseCurrencyReporting ? { base_currency_reporting: baseCurrencyReporting } : {}),
+    ...(fxCoverage ? { fx_coverage: fxCoverage, fx_warnings: fxWarnings } : {}),
   };
 }
 
@@ -980,6 +986,7 @@ export function buildContext(opts: {
   all: LedgerEvent[];
   after?: string;
   before?: string;
+  baseCurrency?: string;
   verbose?: boolean;
   includePolicy?: boolean;
   allowProvisional?: boolean;
@@ -992,8 +999,9 @@ export function buildContext(opts: {
   const snapshot = latestSnapshot(opts.all, opts.after);
   const effectiveAfter = snapshot?.ts ?? opts.after;
   const events = sortByTimestamp(filter(opts.all, { after: effectiveAfter, before: opts.before }).filter((event) => event.type !== "snapshot"));
-  const summary = buildContextSummary(events, opts.all);
+  const summary = buildContextSummary(events, opts.all, opts.baseCurrency);
   const summaryOut = opts.verbose ? summary : buildCompactContextSummary(summary);
+  const fxWarnings = opts.baseCurrency && summary.fx_coverage ? convertedAmountWarnings(summary.fx_coverage) : [];
   const metadata = {
     schema_version: "clawbooks.context.v2",
     generated_at: opts.generatedAt ?? new Date().toISOString(),
@@ -1020,6 +1028,7 @@ export function buildContext(opts: {
     sources: summary.sources,
     event_types: summary.event_types,
     currencies: summary.currencies,
+    requested_base_currency: opts.baseCurrency ?? null,
     workflow: opts.workflow,
     provisional_override: opts.allowProvisional === true,
   };
@@ -1043,6 +1052,12 @@ export function buildContext(opts: {
       ]
       : ["No snapshot is present for this window, so reason directly from the events block."]),
     "Prefer the summary block for orientation, and use the events block for transaction-level reasoning.",
+    ...(opts.baseCurrency
+      ? [
+        `Converted reporting requested in base currency ${opts.baseCurrency}.`,
+        ...fxWarnings,
+      ]
+      : []),
     ...(opts.verbose ? [] : ["This is the compact context view. Use --verbose to print the full raw event payloads."]),
     "Reclassify, correction, and confirm events are append-only audit events; use them when interpreting categories, field fixes, and review status.",
     "Amounts are signed: inflows are positive, outflows are negative for known flow types. Document types (invoice, bill) are signed by direction.",
@@ -1064,6 +1079,8 @@ export function buildContext(opts: {
         description: String(event.data.description ?? ""),
         amount: event.data.amount,
         currency: String(event.data.currency ?? ""),
+        ...(event.data.base_amount !== undefined ? { base_amount: event.data.base_amount } : {}),
+        ...(event.data.base_currency !== undefined ? { base_currency: String(event.data.base_currency ?? "") } : {}),
         confidence: String(event.data.confidence ?? ""),
         id: event.id,
       };
@@ -1086,13 +1103,14 @@ export function buildPackData(opts: {
   after?: string;
   before?: string;
   source?: string;
+  baseCurrency?: string;
   workflow: WorkflowStatus;
   policyText?: string | null;
   generatedAt?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before, source: opts.source }));
   const generalLedgerCsv = [
-    "date,source,type,category,description,amount,currency,confidence,id",
+    "date,source,type,category,description,amount,currency,base_amount,base_currency,confidence,id",
     ...events
       .filter((event) => !META_TYPES.has(event.type))
       .map((event) => [
@@ -1103,6 +1121,8 @@ export function buildPackData(opts: {
         csvEscape(String(event.data.description ?? "")),
         String(event.data.amount ?? ""),
         String(event.data.currency ?? ""),
+        String(event.data.base_amount ?? ""),
+        String(event.data.base_currency ?? ""),
         String(event.data.confidence ?? ""),
         event.id,
       ].join(",")),
@@ -1134,6 +1154,9 @@ export function buildPackData(opts: {
   const settlements = buildDocumentSettlementData(events, opts.before ?? opts.generatedAt ?? new Date().toISOString());
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
+  const fxCoverage = opts.baseCurrency ? buildFxCoverage(effectiveEvents, opts.baseCurrency) : null;
+  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(effectiveEvents, opts.baseCurrency) : null;
+  const fxWarnings = fxCoverage ? convertedAmountWarnings(fxCoverage) : [];
 
   for (const [index, event] of events.entries()) {
     const effectiveEvent = effectiveEvents[index];
@@ -1180,6 +1203,8 @@ export function buildPackData(opts: {
     payable_candidates: settlements.payable_candidates,
     review_materiality: reviewMateriality,
     correction_summary: correctionSummary,
+    ...(baseCurrencyReporting ? { base_currency_reporting: baseCurrencyReporting } : {}),
+    ...(fxCoverage ? { fx_coverage: fxCoverage, fx_warnings: fxWarnings } : {}),
   };
 
   const assetRegister = buildAssetRegister(events, {

@@ -14,6 +14,7 @@ export function cmdSummary(args: string[], ledgerPath: string) {
     after,
     before,
     source: f.source,
+    baseCurrency: f["base-currency"],
   });
 
   console.log(JSON.stringify({

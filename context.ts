@@ -2,9 +2,9 @@ import type { LedgerEvent } from "./ledger.js";
 import { META_TYPES } from "./event-types.js";
 import { buildDocumentSettlementData } from "./documents.js";
 import { applyReclassifications, buildCorrectionSummary, buildReclassifyMap, buildReviewMateriality, reviewCounts } from "./review.js";
-import { buildCategoryRollup, buildReportingSections, round2, topCategoryEntries } from "./reporting.js";
+import { buildBaseCurrencySummary, buildCategoryRollup, buildFxCoverage, buildReportingSections, round2, topCategoryEntries } from "./reporting.js";
 
-export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
+export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], baseCurrency?: string) {
   const effectiveEvents = applyReclassifications(events, all);
   const reclassifyMap = buildReclassifyMap(all);
   const byType: Record<string, { count: number; total: number }> = {};
@@ -63,6 +63,8 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, all);
   const corrections = buildCorrectionSummary(events);
+  const fxCoverage = baseCurrency ? buildFxCoverage(effectiveEvents, baseCurrency) : null;
+  const baseCurrencyReporting = baseCurrency ? buildBaseCurrencySummary(effectiveEvents, baseCurrency) : null;
 
   return {
     event_count: events.length,
@@ -98,6 +100,8 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[]) {
     receivable_candidates: settlements.receivable_candidates,
     payable_candidates: settlements.payable_candidates,
     top_open_documents: settlements.items.slice(0, 5),
+    ...(baseCurrencyReporting ? { base_currency_reporting: baseCurrencyReporting } : {}),
+    ...(fxCoverage ? { fx_coverage: fxCoverage } : {}),
   };
 }
 
@@ -121,5 +125,7 @@ export function buildCompactContextSummary(summary: ReturnType<typeof buildConte
     top_transfers: topCategoryEntries(summary.report_sections.internal_transfers, 3),
     review: summary.review,
     review_materiality: summary.review_materiality,
+    ...(Object.prototype.hasOwnProperty.call(summary, "base_currency_reporting") ? { base_currency_reporting: summary.base_currency_reporting } : {}),
+    ...(Object.prototype.hasOwnProperty.call(summary, "fx_coverage") ? { fx_coverage: summary.fx_coverage } : {}),
   };
 }

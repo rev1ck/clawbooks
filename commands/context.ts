@@ -16,6 +16,7 @@ export function cmdContext(args: string[], params: ContextParams) {
     all: readAll(params.ledgerPath),
     after,
     before,
+    baseCurrency: f["base-currency"],
     verbose: f.verbose === "true",
     includePolicy: f["include-policy"] === "true",
     allowProvisional: f["allow-provisional"] === "true",

@@ -304,6 +304,7 @@ The canonical recommendation is:
 
 Common optional fields:
 
+- `base_amount`
 - `fx_rate`
 - `base_currency`
 - `price_usd`
@@ -312,6 +313,15 @@ Common optional fields:
 - `lot_id`
 - `lot_ref`
 - `disposition_lots`
+
+For single-currency reporting, prefer:
+
+- `amount` as the native signed transaction amount
+- `currency` as the native transaction currency
+- `base_amount` as the explicit signed reporting amount
+- `base_currency` as the reporting currency for `base_amount`
+
+`fx_rate` and `price_usd` are valuation facts and audit metadata. They SHOULD NOT be treated as an implicit instruction to derive reporting totals later.
 
 ## Canonical Event Shapes
 

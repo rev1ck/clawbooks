@@ -256,6 +256,7 @@ grep -q '"canonical_agent_prompt"' "$QUICKSTART_JSON" || { echo "FAIL: quickstar
 HELP_SUMMARY="$EMPTY_DIR3/help-summary.txt"
 (cd "$EMPTY_DIR3" && $CLI summary --help 2>&1) > "$HELP_SUMMARY"
 grep -q 'Usage: clawbooks summary' "$HELP_SUMMARY" || { echo "FAIL: summary --help should print command help"; exit 1; }
+grep -q -- '--base-currency' "$HELP_SUMMARY" || { echo "FAIL: summary --help should mention --base-currency"; exit 1; }
 
 HELP_IMPORT="$EMPTY_DIR3/help-import.txt"
 (cd "$EMPTY_DIR3" && $CLI import check --help 2>&1) > "$HELP_IMPORT"
@@ -284,6 +285,10 @@ fi
 HELP_REVIEW_BATCH="$EMPTY_DIR3/help-review-batch.txt"
 (cd "$EMPTY_DIR3" && $CLI review batch --help 2>&1) > "$HELP_REVIEW_BATCH"
 grep -q 'Usage: clawbooks review batch' "$HELP_REVIEW_BATCH" || { echo "FAIL: review batch --help should print command help"; exit 1; }
+
+HELP_PACK="$EMPTY_DIR3/help-pack.txt"
+(cd "$EMPTY_DIR3" && $CLI pack --help 2>&1) > "$HELP_PACK"
+grep -q -- '--allow-partial-fx' "$HELP_PACK" || { echo "FAIL: pack --help should mention --allow-partial-fx"; exit 1; }
 rm -rf "$EMPTY_DIR3"
 
 # Test 8c: import scaffold emits files without institution-specific magic
@@ -687,5 +692,80 @@ assert(summary.category_rollup.hosting.net === -80, "category rollup should net 
 console.log("reclassification/category rollup: ok");
 EOF
 rm -rf "$RECLASS_ROOT"
+
+FX_PARTIAL_ROOT="$(mktemp -d)"
+(cd "$FX_PARTIAL_ROOT" && $CLI init >/dev/null 2>&1)
+(cd "$FX_PARTIAL_ROOT" && $CLI workflow ack --program --policy >/dev/null 2>&1)
+cat > "$FX_PARTIAL_ROOT/fx-partial.jsonl" <<'EOF'
+{"source":"bank","type":"income","ts":"2026-03-01T00:00:00.000Z","data":{"amount":100,"currency":"USD","base_amount":100,"base_currency":"USD","category":"service_revenue","confidence":"clear"}}
+{"source":"bank","type":"expense","ts":"2026-03-02T00:00:00.000Z","data":{"amount":1850,"currency":"ZAR","base_amount":-100.27,"base_currency":"USD","category":"hosting","confidence":"clear"}}
+{"source":"bank","type":"expense","ts":"2026-03-03T00:00:00.000Z","data":{"amount":20,"currency":"USD","category":"software","confidence":"clear"}}
+{"source":"bank","type":"refund_received","ts":"2026-03-04T00:00:00.000Z","data":{"amount":10,"currency":"ZAR","base_amount":0.54,"base_currency":"EUR","category":"hosting_refund","confidence":"clear"}}
+EOF
+(cd "$FX_PARTIAL_ROOT" && $CLI batch < fx-partial.jsonl >/dev/null 2>&1)
+FX_PARTIAL_SUMMARY="$FX_PARTIAL_ROOT/fx-partial-summary.json"
+(cd "$FX_PARTIAL_ROOT" && $CLI summary 2026-03 --base-currency USD 2>&1) > "$FX_PARTIAL_SUMMARY"
+node - <<'EOF' "$FX_PARTIAL_SUMMARY"
+const fs = require("fs");
+const summary = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+assert(summary.fx_coverage.status === "partial", "summary should report partial FX coverage");
+assert(summary.fx_coverage.eligible_event_count === 4, "summary should count all native-amount events as FX-eligible");
+assert(summary.fx_coverage.converted_event_count === 2, "summary should count only explicit USD base_amount events as converted");
+assert(summary.fx_coverage.missing_base_amount_count === 1, "summary should flag same-currency rows without base_amount as missing");
+assert(summary.fx_coverage.mismatched_base_currency_count === 1, "summary should flag rows converted into another base currency");
+assert(summary.base_currency_reporting.report_totals.operating_income === 100, "converted reporting should include explicit converted income only");
+assert(summary.base_currency_reporting.report_totals.operating_expenses === 100.27, "converted reporting should include explicit converted expenses only");
+assert(Array.isArray(summary.fx_warnings) && summary.fx_warnings.length > 0, "summary should emit FX warnings for partial coverage");
+console.log("fx partial summary: ok");
+EOF
+FX_PARTIAL_CONTEXT="$FX_PARTIAL_ROOT/fx-partial-context.txt"
+(cd "$FX_PARTIAL_ROOT" && $CLI context 2026-03 --base-currency USD 2>&1) > "$FX_PARTIAL_CONTEXT"
+grep -q 'Converted reporting requested in base currency USD' "$FX_PARTIAL_CONTEXT" || { echo "FAIL: context should mention requested base currency"; exit 1; }
+grep -q 'FX coverage is PARTIAL' "$FX_PARTIAL_CONTEXT" || { echo "FAIL: context should surface FX coverage warning"; exit 1; }
+if (cd "$FX_PARTIAL_ROOT" && $CLI pack 2026-03 --out "$FX_PARTIAL_ROOT/pack" --base-currency USD >/dev/null 2>&1); then
+  echo "FAIL: pack should refuse partial FX coverage without --allow-partial-fx"; exit 1
+fi
+(cd "$FX_PARTIAL_ROOT" && $CLI pack 2026-03 --out "$FX_PARTIAL_ROOT/pack" --base-currency USD --allow-partial-fx >/dev/null 2>&1)
+grep -q '"status": "partial"' "$FX_PARTIAL_ROOT/pack/summary.json" || { echo "FAIL: pack summary should persist partial FX coverage"; exit 1; }
+rm -rf "$FX_PARTIAL_ROOT"
+
+FX_COMPLETE_ROOT="$(mktemp -d)"
+(cd "$FX_COMPLETE_ROOT" && $CLI init >/dev/null 2>&1)
+(cd "$FX_COMPLETE_ROOT" && $CLI workflow ack --program --policy >/dev/null 2>&1)
+cat > "$FX_COMPLETE_ROOT/fx-complete.jsonl" <<'EOF'
+{"source":"bank","type":"income","ts":"2026-03-01T00:00:00.000Z","data":{"amount":100,"currency":"USD","base_amount":100,"base_currency":"USD","category":"service_revenue","confidence":"clear"}}
+{"source":"bank","type":"expense","ts":"2026-03-02T00:00:00.000Z","data":{"amount":1850,"currency":"ZAR","base_amount":-100.27,"base_currency":"USD","category":"hosting","confidence":"clear"}}
+EOF
+(cd "$FX_COMPLETE_ROOT" && $CLI batch < fx-complete.jsonl >/dev/null 2>&1)
+FX_COMPLETE_SUMMARY="$FX_COMPLETE_ROOT/fx-complete-summary.json"
+(cd "$FX_COMPLETE_ROOT" && $CLI summary 2026-03 --base-currency USD 2>&1) > "$FX_COMPLETE_SUMMARY"
+node - <<'EOF' "$FX_COMPLETE_SUMMARY"
+const fs = require("fs");
+const summary = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (summary.fx_coverage.status !== "complete") throw new Error("summary should report complete FX coverage");
+if (summary.fx_coverage.converted_event_count !== 2) throw new Error("complete FX coverage should count both events");
+EOF
+(cd "$FX_COMPLETE_ROOT" && $CLI pack 2026-03 --out "$FX_COMPLETE_ROOT/pack" --base-currency USD >/dev/null 2>&1)
+grep -q '"status": "complete"' "$FX_COMPLETE_ROOT/pack/summary.json" || { echo "FAIL: pack should allow complete FX coverage without override"; exit 1; }
+rm -rf "$FX_COMPLETE_ROOT"
+
+FX_NONE_ROOT="$(mktemp -d)"
+(cd "$FX_NONE_ROOT" && $CLI init >/dev/null 2>&1)
+cat > "$FX_NONE_ROOT/fx-none.jsonl" <<'EOF'
+{"source":"bank","type":"income","ts":"2026-03-01T00:00:00.000Z","data":{"amount":100,"currency":"USD","category":"service_revenue","confidence":"clear"}}
+EOF
+(cd "$FX_NONE_ROOT" && $CLI batch < fx-none.jsonl >/dev/null 2>&1)
+FX_NONE_SUMMARY="$FX_NONE_ROOT/fx-none-summary.json"
+(cd "$FX_NONE_ROOT" && $CLI summary 2026-03 --base-currency USD 2>&1) > "$FX_NONE_SUMMARY"
+node - <<'EOF' "$FX_NONE_SUMMARY"
+const fs = require("fs");
+const summary = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (summary.fx_coverage.status !== "none") throw new Error("summary should report none when no explicit converted facts exist");
+if (summary.fx_coverage.converted_event_count !== 0) throw new Error("summary none coverage should have zero converted events");
+EOF
+rm -rf "$FX_NONE_ROOT"
 
 echo "books-resolution tests: ok"

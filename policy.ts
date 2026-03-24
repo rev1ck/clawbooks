@@ -158,11 +158,11 @@ export function lintPolicyText(text: string, policyPath: string) {
         message: "Crypto/trading policy should define lot-tracking conventions such as data.lot_id or data.lot_ref.",
       });
     }
-    if (workflows.trading && !/fx_rate|price_usd|valuation_ts|price_source/i.test(text)) {
+    if (workflows.trading && !/base_amount|fx_rate|price_usd|valuation_ts|price_source/i.test(text)) {
       pushCheck(checks, suggestions, {
         severity: "warn",
         code: "missing_fx_conventions",
-        message: "Crypto/trading policy should define FX or valuation fields such as data.fx_rate or data.price_usd.",
+        message: "Crypto/trading policy should define FX or valuation fields such as data.base_amount, data.fx_rate, or data.price_usd.",
       });
     }
     if (!/source_doc|provenance|source_row|source_hash/i.test(text)) {

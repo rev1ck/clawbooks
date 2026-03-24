@@ -101,13 +101,15 @@ The agent assigns lots during ingestion based on policy (FIFO, LIFO, specific id
 ### FX / transaction-time valuation
 
 For cross-currency and crypto events, store valuation facts at ingestion time:
+- `data.base_amount`
 - `data.fx_rate`
 - `data.base_currency`
 - `data.price_usd`
 - `data.price_source`
 - `data.valuation_ts`
 
-This avoids re-fetching historical prices later.
+Use `data.base_amount` as the explicit reporting amount in `data.base_currency` when you want single-currency rollups later.
+This avoids re-fetching historical prices later and avoids hidden FX logic at report time.
 
 ### Provenance
 

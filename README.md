@@ -70,6 +70,7 @@ Clawbooks is not just for lightweight summaries. The toolchain is intended to su
 - asset register and depreciation
 - reconciliations and integrity checks
 - audit packs
+- explicit single-currency converted views where imports store `data.base_amount`
 - custom period reporting and transaction investigations
 
 The outputs come from combining `summary`, `context`, `documents`, `assets`, `verify`, `reconcile`, and `pack` with the rules in `policy.md`.
@@ -316,7 +317,9 @@ Analyze and report:
 
 ```bash
 clawbooks summary 2026-03
+clawbooks summary 2026-03 --base-currency USD
 clawbooks context 2026-03
+clawbooks context 2026-03 --base-currency USD
 clawbooks context 2026-03 --include-policy
 clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD
 clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --opening-balance 45000 --closing-balance 46250 --date-basis posting --gaps
@@ -325,12 +328,15 @@ clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --con
 clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software
 clawbooks assets --as-of 2026-03-31
 clawbooks pack 2026-03 --out ./march-pack
+clawbooks pack 2026-03 --out ./march-pack --base-currency USD
 clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 ```
 
 `review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
 `summary`, `review`, `verify`, and `reconcile` now echo their resolved scope so operators can see the actual time window and filters that were applied.
+When you pass `--base-currency`, `summary`, `context`, and `pack` only use explicit `data.base_amount` + `data.base_currency` facts for converted totals. They do not derive converted totals from `data.fx_rate` or `data.price_usd`.
 `summary`, `context`, and `review` can be run in provisional mode when you explicitly choose exploratory output. `pack` is stricter: it refuses provisional runs unless you pass `--allow-provisional`.
+`pack --base-currency` is stricter again: it refuses partial FX coverage unless you also pass `--allow-partial-fx`.
 For non-CLI integrations, the same logic is available from `clawbooks/operations`.
 Period arguments support whole years (`2026`), months (`2026-03`), and explicit ranges (`2026-01/2026-06-30`).
 

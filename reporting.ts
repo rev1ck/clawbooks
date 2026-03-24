@@ -13,7 +13,7 @@ export function sortByTimestamp(events: LedgerEvent[]): LedgerEvent[] {
   );
 }
 
-export function buildReportingSections(events: LedgerEvent[]) {
+function buildReportingSectionsWithAmount(events: LedgerEvent[], amountFor: (event: LedgerEvent) => number | undefined) {
   const sections: Record<string, Record<string, number>> = {
     operating_income: {},
     operating_expenses: {},
@@ -40,7 +40,7 @@ export function buildReportingSections(events: LedgerEvent[]) {
 
   for (const e of events) {
     if (META_TYPES.has(e.type)) continue;
-    const amount = signedAmount(e);
+    const amount = amountFor(e);
     if (amount === undefined) continue;
     const category = String(e.data.category ?? e.type);
     const section = classifyEventSection(e);
@@ -89,7 +89,23 @@ export function buildReportingSections(events: LedgerEvent[]) {
   };
 }
 
-export function buildCategoryRollup(events: LedgerEvent[]) {
+export function buildReportingSections(events: LedgerEvent[]) {
+  return buildReportingSectionsWithAmount(events, signedAmount);
+}
+
+export function baseAmountForCurrency(event: LedgerEvent, baseCurrency: string): number | undefined {
+  if (String(event.data.base_currency ?? "") !== baseCurrency) return undefined;
+  const amount = Number(event.data.base_amount);
+  return Number.isFinite(amount) ? amount : undefined;
+}
+
+export function buildReportingSectionsForBaseCurrency(events: LedgerEvent[], baseCurrency: string) {
+  return buildReportingSectionsWithAmount(events, (event) => baseAmountForCurrency(event, baseCurrency));
+}
+
+type FxCoverageStatus = "complete" | "partial" | "none";
+
+function buildCategoryRollupWithAmount(events: LedgerEvent[], amountFor: (event: LedgerEvent) => number | undefined) {
   const buckets: Record<string, {
     count: number;
     inflows: number;
@@ -102,7 +118,7 @@ export function buildCategoryRollup(events: LedgerEvent[]) {
 
   for (const event of events) {
     if (META_TYPES.has(event.type)) continue;
-    const amount = signedAmount(event);
+    const amount = amountFor(event);
     if (amount === undefined) continue;
 
     const category = String(event.data.category ?? event.type);
@@ -142,6 +158,146 @@ export function buildCategoryRollup(events: LedgerEvent[]) {
         },
       ]),
   );
+}
+
+export function buildCategoryRollup(events: LedgerEvent[]) {
+  return buildCategoryRollupWithAmount(events, signedAmount);
+}
+
+export function buildCategoryRollupForBaseCurrency(events: LedgerEvent[], baseCurrency: string) {
+  return buildCategoryRollupWithAmount(events, (event) => baseAmountForCurrency(event, baseCurrency));
+}
+
+export function buildFxCoverage(events: LedgerEvent[], baseCurrency: string) {
+  const nativeCurrencyBreakdown: Record<string, number> = {};
+  const missingExamples: Array<{
+    id: string;
+    ts: string;
+    currency: string;
+    amount: number;
+    category: string;
+    reason: "missing_base_amount" | "mismatched_base_currency";
+    event_base_currency: string | null;
+  }> = [];
+  let eligibleEventCount = 0;
+  let convertedEventCount = 0;
+  let missingBaseAmountCount = 0;
+  let mismatchedBaseCurrencyCount = 0;
+
+  for (const event of events) {
+    if (META_TYPES.has(event.type)) continue;
+    const nativeAmount = Number(event.data.amount);
+    if (!Number.isFinite(nativeAmount)) continue;
+
+    eligibleEventCount++;
+    const nativeCurrency = String(event.data.currency ?? "UNKNOWN");
+    nativeCurrencyBreakdown[nativeCurrency] = (nativeCurrencyBreakdown[nativeCurrency] ?? 0) + 1;
+
+    const convertedAmount = baseAmountForCurrency(event, baseCurrency);
+    if (convertedAmount !== undefined) {
+      convertedEventCount++;
+      continue;
+    }
+
+    const eventBaseCurrency = typeof event.data.base_currency === "string" && event.data.base_currency.trim()
+      ? String(event.data.base_currency)
+      : null;
+    const reason = eventBaseCurrency && eventBaseCurrency !== baseCurrency
+      ? "mismatched_base_currency"
+      : "missing_base_amount";
+
+    if (reason === "mismatched_base_currency") mismatchedBaseCurrencyCount++;
+    else missingBaseAmountCount++;
+
+    if (missingExamples.length < 5) {
+      missingExamples.push({
+        id: event.id,
+        ts: event.ts,
+        currency: nativeCurrency,
+        amount: nativeAmount,
+        category: String(event.data.category ?? event.type),
+        reason,
+        event_base_currency: eventBaseCurrency,
+      });
+    }
+  }
+
+  const status: FxCoverageStatus = convertedEventCount === 0
+    ? "none"
+    : convertedEventCount === eligibleEventCount
+      ? "complete"
+      : "partial";
+
+  return {
+    requested_base_currency: baseCurrency,
+    eligible_event_count: eligibleEventCount,
+    converted_event_count: convertedEventCount,
+    missing_base_amount_count: missingBaseAmountCount,
+    mismatched_base_currency_count: mismatchedBaseCurrencyCount,
+    native_currency_breakdown: nativeCurrencyBreakdown,
+    missing_examples: missingExamples,
+    status,
+  };
+}
+
+export function convertedAmountWarnings(coverage: ReturnType<typeof buildFxCoverage>) {
+  if (coverage.status === "complete") return [];
+  if (coverage.status === "none") {
+    return [
+      `FX coverage is NONE for requested base currency ${coverage.requested_base_currency}; no events in scope have explicit converted facts.`,
+    ];
+  }
+  return [
+    `FX coverage is PARTIAL for requested base currency ${coverage.requested_base_currency}; converted facts exist for ${coverage.converted_event_count}/${coverage.eligible_event_count} eligible event(s).`,
+    ...(coverage.missing_base_amount_count > 0
+      ? [`${coverage.missing_base_amount_count} eligible event(s) are missing data.base_amount/data.base_currency for ${coverage.requested_base_currency}.`]
+      : []),
+    ...(coverage.mismatched_base_currency_count > 0
+      ? [`${coverage.mismatched_base_currency_count} event(s) contain converted facts for a different base currency.`]
+      : []),
+  ];
+}
+
+export function buildBaseCurrencySummary(events: LedgerEvent[], baseCurrency: string) {
+  const byType: Record<string, { count: number; total: number }> = {};
+  const byCategory: Record<string, { count: number; total: number }> = {};
+  let inflows = 0;
+  let outflows = 0;
+
+  for (const event of events) {
+    if (META_TYPES.has(event.type)) continue;
+    const amount = baseAmountForCurrency(event, baseCurrency);
+    if (amount === undefined) continue;
+
+    const category = String(event.data.category ?? event.type);
+    if (!byType[event.type]) byType[event.type] = { count: 0, total: 0 };
+    byType[event.type].count++;
+    byType[event.type].total = round2(byType[event.type].total + amount);
+
+    if (!byCategory[category]) byCategory[category] = { count: 0, total: 0 };
+    byCategory[category].count++;
+    byCategory[category].total = round2(byCategory[category].total + amount);
+
+    if (amount > 0) inflows = round2(inflows + amount);
+    else outflows = round2(outflows + amount);
+  }
+
+  const reporting = buildReportingSectionsForBaseCurrency(events, baseCurrency);
+  const categoryRollup = buildCategoryRollupForBaseCurrency(events, baseCurrency);
+  return {
+    base_currency: baseCurrency,
+    by_type: byType,
+    by_category: byCategory,
+    category_rollup: categoryRollup,
+    cash_flow: {
+      inflows,
+      outflows,
+      net: round2(inflows + outflows),
+    },
+    movement_summary: reporting.movement_summary,
+    report_sections: reporting.sections,
+    report_totals: reporting.totals,
+  };
 }
 
 export function topCategoryEntries(section: Record<string, number>, limit = 5): Array<{ category: string; total: number }> {

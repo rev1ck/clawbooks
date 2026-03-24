@@ -179,9 +179,12 @@ Quick examples:
   clawbooks policy --list-examples
   clawbooks policy --example simple
   clawbooks summary 2026-03
+  clawbooks summary 2026-03 --base-currency USD
   clawbooks context 2026-03 --include-policy
+  clawbooks context 2026-03 --base-currency USD
   clawbooks verify 2026-03 --balance 153869.05 --currency USD
   clawbooks pack 2026-03 --out ./march-pack
+  clawbooks pack 2026-03 --out ./march-pack --base-currency USD
   clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 
 Outcome surface:
@@ -208,6 +211,7 @@ Common flags:
   --type   / -T <name>        Filter by type
   --verbose                   Print full raw payloads where supported
   --include-policy            Inline the full policy in context output
+  --base-currency <C>         Request explicit converted reporting in currency C where data.base_amount exists
   --last   <N>                Last N events (log only, default 20)
   --dest <DIR>                Destination directory for skill installation
   --force                     Replace an existing installed skill
@@ -233,6 +237,7 @@ Review flags:
   --confirmed-by <NAME>       Confirmer label for bulk confirm files
   --notes <TEXT>              Notes for bulk confirm files
   --new-category <CAT>        Target category for bulk reclassify files
+  --allow-partial-fx          Allow audit pack generation when converted FX coverage is incomplete
 
 Workflow flags:
   --classification-basis <kind>
@@ -381,13 +386,15 @@ Generate append-only JSONL review actions for the visible queue. Inspect the fil
 Examples:
   clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
   clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software`,
-    summary: `Usage: clawbooks summary [period] [flags] [--allow-provisional]
+    summary: `Usage: clawbooks summary [period] [flags] [--base-currency C] [--allow-provisional]
 
 Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
+When --base-currency is set, clawbooks adds a converted reporting view using explicit data.base_amount facts only.
 Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
 Examples:
   clawbooks summary 2026-03
+  clawbooks summary 2026-03 --base-currency USD
   clawbooks summary 2026-01/2026-06-30`,
     policy: `Usage: clawbooks policy [lint] [--path] [--list-examples] [--example NAME]
 
@@ -433,13 +440,15 @@ Show setup diagnostics, policy readiness, import/review readiness, and operator 
 
 Example:
   clawbooks doctor`,
-    context: `Usage: clawbooks context [period] [--include-policy] [--verbose] [--allow-provisional]
+    context: `Usage: clawbooks context [period] [--include-policy] [--verbose] [--base-currency C] [--allow-provisional]
 
 Print policy-aware context for reasoning and reporting.
+When --base-currency is set, the summary block includes explicit converted reporting plus FX coverage warnings.
 Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
 Examples:
   clawbooks context 2026-03
+  clawbooks context 2026-03 --base-currency USD
   clawbooks context 2026-03 --include-policy`,
     record: `Usage: clawbooks record '<json>' [--classification-basis BASIS] [--allow-provisional]
 
@@ -461,13 +470,15 @@ Show neutral settlement, aging, and document status views.
 
 Example:
   clawbooks documents 2026-03 --as-of 2026-03-31T00:00:00.000Z`,
-    pack: `Usage: clawbooks pack [period] [--out DIR] [--allow-provisional]
+    pack: `Usage: clawbooks pack [period] [--out DIR] [--base-currency C] [--allow-partial-fx] [--allow-provisional]
 
 Generate an audit pack with CSVs, JSON, and the applied policy.
 Pack refuses provisional runs unless you pass --allow-provisional.
+If --base-currency is set, pack also requires complete explicit FX coverage unless you pass --allow-partial-fx.
 
 Examples:
   clawbooks pack 2026-03 --out ./march-pack
+  clawbooks pack 2026-03 --out ./march-pack --base-currency USD
   clawbooks pack 2026-03 --out ./march-pack --allow-provisional`,
   };
 
