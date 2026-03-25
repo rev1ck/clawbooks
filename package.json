@@ -1,6 +1,6 @@
 {
   "name": "clawbooks",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Accounting by inference, not by engine. Zero dependencies.",
   "type": "module",
   "repository": {
@@ -29,7 +29,7 @@
     "./event-types": "./build/event-types.js"
   },
   "scripts": {
-    "build": "tsc && chmod 755 build/cli.js",
+    "build": "node scripts/clean-build.mjs && tsc && chmod 755 build/cli.js",
     "test": "npm run build && /usr/bin/bash test/cli.regression.sh",
     "test:e2e": "npm run build && /usr/bin/bash test/e2e.release.sh",
     "test:release": "npm run test && npm run test:e2e",
