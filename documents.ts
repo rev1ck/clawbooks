@@ -228,3 +228,86 @@ export function buildDocumentSettlementData(events: LedgerEvent[], asOf = new Da
     unmatched_cash: [...unmatchedCash.values()].sort((a, b) => Math.abs(b.cash_total) - Math.abs(a.cash_total) || a.invoice_id.localeCompare(b.invoice_id)),
   };
 }
+
+type DocumentItem = ReturnType<typeof buildDocumentSettlementData>["items"][number];
+
+function counterpartyGroupKey(item: DocumentItem): string {
+  if (item.counterparty.length === 0) return "(missing)";
+  if (item.counterparty.length > 1) return "(multiple)";
+  return item.counterparty[0];
+}
+
+export function buildDocumentCounterpartySummary(items: DocumentItem[]) {
+  const groups = new Map<string, {
+    counterparty: string;
+    document_count: number;
+    invoice_count: number;
+    open_balance: number;
+    overpaid_balance: number;
+    matched_cash_magnitude: number;
+    document_magnitude: number;
+    issued_count: number;
+    received_count: number;
+    statuses: Record<string, number>;
+    currencies: Set<string>;
+    first_document_ts: string | null;
+    last_document_ts: string | null;
+    invoice_ids: string[];
+  }>();
+
+  for (const item of items) {
+    const key = counterpartyGroupKey(item);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        counterparty: key,
+        document_count: 0,
+        invoice_count: 0,
+        open_balance: 0,
+        overpaid_balance: 0,
+        matched_cash_magnitude: 0,
+        document_magnitude: 0,
+        issued_count: 0,
+        received_count: 0,
+        statuses: {},
+        currencies: new Set<string>(),
+        first_document_ts: null,
+        last_document_ts: null,
+        invoice_ids: [],
+      });
+    }
+
+    const row = groups.get(key)!;
+    row.document_count += item.document_count;
+    row.invoice_count += 1;
+    row.open_balance = round2(row.open_balance + item.open_balance);
+    row.overpaid_balance = round2(row.overpaid_balance + item.overpaid_balance);
+    row.matched_cash_magnitude = round2(row.matched_cash_magnitude + item.matched_cash_magnitude);
+    row.document_magnitude = round2(row.document_magnitude + item.document_magnitude);
+    if (item.direction === "issued") row.issued_count += 1;
+    if (item.direction === "received") row.received_count += 1;
+    row.statuses[item.status] = (row.statuses[item.status] ?? 0) + 1;
+    for (const currency of item.currencies) row.currencies.add(currency);
+    row.first_document_ts = row.first_document_ts === null || item.first_document_ts < row.first_document_ts ? item.first_document_ts : row.first_document_ts;
+    row.last_document_ts = row.last_document_ts === null || item.last_document_ts > row.last_document_ts ? item.last_document_ts : row.last_document_ts;
+    row.invoice_ids.push(item.invoice_id);
+  }
+
+  return [...groups.values()]
+    .map((row) => ({
+      counterparty: row.counterparty,
+      document_count: row.document_count,
+      invoice_count: row.invoice_count,
+      open_balance: row.open_balance,
+      overpaid_balance: row.overpaid_balance,
+      matched_cash_magnitude: row.matched_cash_magnitude,
+      document_magnitude: row.document_magnitude,
+      issued_count: row.issued_count,
+      received_count: row.received_count,
+      statuses: row.statuses,
+      currencies: [...row.currencies].sort(),
+      first_document_ts: row.first_document_ts,
+      last_document_ts: row.last_document_ts,
+      sample_invoice_ids: row.invoice_ids.sort().slice(0, 10),
+    }))
+    .sort((a, b) => b.open_balance - a.open_balance || a.counterparty.localeCompare(b.counterparty));
+}

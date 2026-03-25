@@ -14,7 +14,7 @@ type PackParams = {
 
 export function cmdPack(args: string[], params: PackParams) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
+  const { after, before } = periodFromArgs(args, { policyPath: params.policyPath });
   const workflow = buildWorkflowStatus({ booksDir: params.booksDir ?? null, policyPath: params.policyPath });
   const allowProvisional = f["allow-provisional"] === "true";
   const allowPartialFx = f["allow-partial-fx"] === "true";

@@ -8,6 +8,14 @@ type LintCheck = {
   message: string;
 };
 
+export type FinancialYearEndHint = {
+  raw: string | null;
+  valid: boolean;
+  month: number | null;
+  day: number | null;
+  error: string | null;
+};
+
 function pushCheck(
   checks: LintCheck[],
   bucket: string[],
@@ -18,15 +26,79 @@ function pushCheck(
   if (!bucket.includes(check.message)) bucket.push(check.message);
 }
 
-function extractYamlHints(text: string): string | null {
+export function extractYamlHints(text: string): string | null {
   const match = text.match(/```yaml\s*([\s\S]*?)```/m);
   return match?.[1] ?? null;
 }
 
-function extractHintValue(yaml: string | null, key: string): string | null {
+export function extractHintValue(yaml: string | null, key: string): string | null {
   if (!yaml) return null;
   const match = yaml.match(new RegExp(`^\\s*${key}:\\s*(.+)$`, "m"));
   return match?.[1]?.trim() ?? null;
+}
+
+export function extractReportingHintValue(text: string, key: string): string | null {
+  const yaml = extractYamlHints(text);
+  if (!yaml) return null;
+  const reportingBlock = yaml.match(/^reporting:\s*\n((?:[ \t].*\n?)*)/m)?.[1] ?? null;
+  return extractHintValue(reportingBlock, key);
+}
+
+export function parseFinancialYearEnd(rawValue: string | null | undefined): FinancialYearEndHint {
+  if (!rawValue) {
+    return {
+      raw: null,
+      valid: false,
+      month: null,
+      day: null,
+      error: "Missing reporting.financial_year_end hint.",
+    };
+  }
+
+  const raw = String(rawValue).trim();
+  if (!/^\d{2}-\d{2}$/.test(raw)) {
+    return {
+      raw,
+      valid: false,
+      month: null,
+      day: null,
+      error: `Invalid reporting.financial_year_end "${raw}". Use zero-padded MM-DD.`,
+    };
+  }
+
+  const [month, day] = raw.split("-").map(Number);
+  if (month < 1 || month > 12) {
+    return {
+      raw,
+      valid: false,
+      month: null,
+      day: null,
+      error: `Invalid reporting.financial_year_end "${raw}". Month must be between 01 and 12.`,
+    };
+  }
+
+  const maxDay = new Date(Date.UTC(2001, month, 0)).getUTCDate();
+  if (day < 1 || day > maxDay) {
+    return {
+      raw,
+      valid: false,
+      month: null,
+      day: null,
+      error: `Invalid reporting.financial_year_end "${raw}". Day must be valid for month ${String(month).padStart(2, "0")}.`,
+    };
+  }
+
+  return {
+    raw,
+    valid: true,
+    month,
+    day,
+    error: null,
+  };
+}
+
+export function financialYearEndFromPolicy(text: string): FinancialYearEndHint {
+  return parseFinancialYearEnd(extractReportingHintValue(text, "financial_year_end"));
 }
 
 function hasHeading(text: string, heading: string): boolean {
@@ -44,6 +116,7 @@ export function lintPolicyText(text: string, policyPath: string) {
   const checks: LintCheck[] = [];
   const yamlHints = extractYamlHints(text);
   const basis = extractHintValue(yamlHints, "basis");
+  const financialYearEnd = financialYearEndFromPolicy(text);
   const hasRevenueRecognition = hasHeading(text, "Revenue recognition");
   const hasExpenseRecognition = hasHeading(text, "Expense recognition");
   const hasArAp = hasHeading(text, "Accounts receivable / payable");
@@ -86,6 +159,19 @@ export function lintPolicyText(text: string, policyPath: string) {
         severity: "error",
         code: "missing_base_currency",
         message: "Missing reporting.base_currency hint.",
+      });
+    }
+    if (!/reporting:\s*\n[\s\S]*financial_year_end:/m.test(text)) {
+      pushCheck(checks, suggestions, {
+        severity: "info",
+        code: "missing_financial_year_end",
+        message: "Add a reporting.financial_year_end hint if you want fiscal-year shorthand such as FY2025.",
+      });
+    } else if (!financialYearEnd.valid && financialYearEnd.error) {
+      pushCheck(checks, issues, {
+        severity: "warn",
+        code: "invalid_financial_year_end",
+        message: financialYearEnd.error,
       });
     }
     if (!/entity:/m.test(text)) {
@@ -218,6 +304,13 @@ export function lintPolicyText(text: string, policyPath: string) {
     coverage: {
       structured_hints: Boolean(yamlHints),
       basis: basis ?? null,
+      financial_year_end: {
+        raw: financialYearEnd.raw,
+        valid: financialYearEnd.valid,
+        month: financialYearEnd.month,
+        day: financialYearEnd.day,
+        error: financialYearEnd.error,
+      },
       sections: {
         entity: hasHeading(text, "Entity"),
         revenue_recognition: hasRevenueRecognition,

@@ -11,7 +11,7 @@ type ContextParams = {
 
 export function cmdContext(args: string[], params: ContextParams) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
+  const { after, before } = periodFromArgs(args, { policyPath: params.policyPath });
   const context = buildContext({
     all: readAll(params.ledgerPath),
     after,

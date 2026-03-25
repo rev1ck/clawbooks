@@ -1,10 +1,12 @@
 import { append, computeId, readAll, type LedgerEvent } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { buildSnapshotData } from "../operations.js";
+import { inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdSnapshot(args: string[], ledgerPath: string) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
+  const { policyPath } = inferWorkflowPaths(ledgerPath);
+  const { after, before } = periodFromArgs(args, { policyPath });
   const snapshotData = buildSnapshotData({ all: readAll(ledgerPath), after, before });
 
   if (f.save === "true") {

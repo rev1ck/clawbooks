@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { financialYearEndFromPolicy } from "./policy.js";
+
 const SHORT_FLAGS: Record<string, string> = { S: "source", T: "type" };
 
 function isValue(arg: string): boolean {
@@ -62,7 +65,36 @@ export function normalizeDateBoundary(value: string, boundary: "after" | "before
   return value;
 }
 
-function parsePeriod(period: string): { after: string; before: string } {
+function fiscalYearRange(period: string, policyPath?: string): { after: string; before: string } {
+  if (!/^FY\d{4}$/.test(period)) {
+    throw new Error(`Invalid fiscal-year shorthand "${period}". Use FY2025.`);
+  }
+  if (!policyPath) {
+    throw new Error(`Fiscal-year shorthand "${period}" requires a resolved policy.md path with reporting.financial_year_end.`);
+  }
+  if (!existsSync(policyPath)) {
+    throw new Error(`Fiscal-year shorthand "${period}" requires a readable policy.md. No file found at ${policyPath}.`);
+  }
+
+  const hint = financialYearEndFromPolicy(readFileSync(policyPath, "utf-8"));
+  if (!hint.valid || hint.month === null || hint.day === null) {
+    throw new Error(hint.error
+      ? `Fiscal-year shorthand "${period}" cannot be resolved: ${hint.error}`
+      : `Fiscal-year shorthand "${period}" cannot be resolved from policy.md.`);
+  }
+
+  const endYear = Number(period.slice(2));
+  const previousYearEnd = new Date(Date.UTC(endYear - 1, hint.month - 1, hint.day));
+  previousYearEnd.setUTCDate(previousYearEnd.getUTCDate() + 1);
+  const after = `${String(previousYearEnd.getUTCFullYear()).padStart(4, "0")}-${String(previousYearEnd.getUTCMonth() + 1).padStart(2, "0")}-${String(previousYearEnd.getUTCDate()).padStart(2, "0")}T00:00:00.000Z`;
+  const before = `${String(endYear).padStart(4, "0")}-${String(hint.month).padStart(2, "0")}-${String(hint.day).padStart(2, "0")}T23:59:59.999Z`;
+  return { after, before };
+}
+
+function parsePeriod(period: string, opts?: { policyPath?: string }): { after: string; before: string } {
+  if (/^FY\d{4}$/.test(period)) {
+    return fiscalYearRange(period, opts?.policyPath);
+  }
   if (period.includes("/")) {
     const [a, b] = period.split("/");
     return {
@@ -76,13 +108,19 @@ function parsePeriod(period: string): { after: string; before: string } {
   };
 }
 
-export function periodFromArgs(args: string[]): { after?: string; before?: string } {
+export function periodFromArgs(args: string[], opts?: { policyPath?: string }): { after?: string; before?: string } {
   const f = flags(args);
   const p = positional(args);
   let after: string | undefined = f.after ? normalizeDateBoundary(f.after, "after") : undefined;
   let before: string | undefined = f.before ? normalizeDateBoundary(f.before, "before") : undefined;
   if (p[0]) {
-    const period = parsePeriod(p[0]);
+    let period;
+    try {
+      period = parsePeriod(p[0], opts);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
     after = after ?? period.after;
     before = before ?? period.before;
   }

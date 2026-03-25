@@ -4,35 +4,15 @@ import { flags, periodFromArgs, positional } from "../cli-helpers.js";
 import { buildReviewBatch, buildReviewQueue } from "../operations.js";
 import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
-function parseReviewArgs(args: string[]) {
-  const f = flags(args);
-  const { after, before } = periodFromArgs(args);
-  return {
-    after,
-    before,
-    source: f.source,
-    confidence: f.confidence ? f.confidence.split(",").map((value) => value.trim()).filter(Boolean) : null,
-    minMagnitude: f["min-magnitude"] !== undefined ? Number(f["min-magnitude"]) : null,
-    limit: f.limit !== undefined ? parseInt(f.limit) : null,
-    groupBy: f["group-by"] ?? null,
-    outPath: f.out,
-    action: f.action ?? "confirm",
-    confirmedBy: f["confirmed-by"],
-    notes: f.notes,
-    newCategory: f["new-category"],
-    allowProvisional: f["allow-provisional"] === "true",
-  };
-}
-
 export function cmdReview(args: string[], ledgerPath: string) {
   const workflowPaths = inferWorkflowPaths(ledgerPath);
   const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const p = positional(args);
-  const parsed = parseReviewArgs(args);
+  const parsed = parseReviewArgsWithPolicy(args, workflowPaths.policyPath);
   const all = readAll(ledgerPath);
   if (p[0] === "batch") {
     const nestedArgs = args.filter((arg, index) => !(index === 0 && arg === "batch"));
-    const nested = parseReviewArgs(nestedArgs);
+    const nested = parseReviewArgsWithPolicy(nestedArgs, workflowPaths.policyPath);
     if (!nested.outPath) {
       console.error("Usage: clawbooks review batch [period] --out PATH --action confirm|reclassify [--confirmed-by NAME] [--notes TEXT] [--new-category CAT]");
       process.exit(1);
@@ -97,4 +77,24 @@ export function cmdReview(args: string[], ledgerPath: string) {
       : "Status: PROVISIONAL",
     ...report,
   }, null, 2));
+}
+
+function parseReviewArgsWithPolicy(args: string[], policyPath: string) {
+  const f = flags(args);
+  const { after, before } = periodFromArgs(args, { policyPath });
+  return {
+    after,
+    before,
+    source: f.source,
+    confidence: f.confidence ? f.confidence.split(",").map((value) => value.trim()).filter(Boolean) : null,
+    minMagnitude: f["min-magnitude"] !== undefined ? Number(f["min-magnitude"]) : null,
+    limit: f.limit !== undefined ? parseInt(f.limit) : null,
+    groupBy: f["group-by"] ?? null,
+    outPath: f.out,
+    action: f.action ?? "confirm",
+    confirmedBy: f["confirmed-by"],
+    notes: f.notes,
+    newCategory: f["new-category"],
+    allowProvisional: f["allow-provisional"] === "true",
+  };
 }

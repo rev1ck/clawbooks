@@ -40,8 +40,10 @@ Bring:
 - Stripe exports
 - exchange fills
 - invoices and bills
-- receipts and PDFs
+- receipts
 - copied transaction text
+
+Clawbooks does not try to parse PDFs for you. The intended boundary is: the agent extracts structured rows upstream, then Clawbooks stores and checks the resulting facts.
 
 The agent reads the source, applies `policy.md`, writes normalized events into clawbooks, and then uses the CLI to produce financial outputs and audit evidence.
 
@@ -86,7 +88,7 @@ Those outputs should be read together with the run state:
 
 ```text
 Raw sources
-CSV / statement / receipt / PDF / export / copied text
+CSV / statement / receipt / export / copied text
   ->
 Agent reads program.md + policy.md
   ->
@@ -263,6 +265,7 @@ clawbooks import scaffold statement-csv
 clawbooks import scaffold generic-csv
 clawbooks import scaffold fills-csv
 clawbooks import scaffold manual-batch
+clawbooks import scaffold opening-balances
 clawbooks import run statement.csv --statement statement-profile.json
 # edit mapper.mjs or mapper.py, then run it to emit JSONL
 clawbooks import check staged.jsonl --statement statement-profile.json --save-session
@@ -283,6 +286,7 @@ Those import sessions also preserve run-level grounding such as `classification_
 `import reconcile` produces a dedicated statement reconciliation artifact comparing staged rows, imported ledger rows, and declared statement expectations.
 `import check` also reports the resolved mappings discovery path order. If you do not pass `--mappings`, clawbooks checks the scaffold location and `.books/vendor-mappings.json`.
 `import run` is the fast path for predictable statement CSVs with stable column names. It stages JSONL, can run `import check` automatically when you pass `--statement`, and can append directly with `--append`.
+`import scaffold opening-balances` is the fast path for seeding many opening balances from a simple table instead of hand-writing one `opening_balance` event at a time.
 `import mappings lookup "<description>"` is the quick reference surface for seeing how a name would match the current mappings file and whether the ledger already has a stable historical classification for it.
 When practical, ingest full source coverage first and use periods/ranges later for reporting and checking.
 
@@ -294,9 +298,11 @@ clawbooks stats
 clawbooks policy
 clawbooks policy lint
 clawbooks documents 2026-03
+clawbooks documents FY2025 --direction received --status open --group-by counterparty
+clawbooks documents counterparties FY2025 --format csv
 ```
 
-`policy lint` is heuristic and advisory. It reports severity-tagged checks, starter-vs-custom readiness signals, and workflow-aware guidance for statements, documents, review/materiality, and trading-heavy policies.
+`policy lint` is heuristic and advisory. It reports severity-tagged checks, starter-vs-custom readiness signals, workflow-aware guidance for statements, documents, review/materiality, and trading-heavy policies, and validates `reporting.financial_year_end` for fiscal-year shorthand.
 
 If you are starting from scratch, the fastest path is usually:
 
@@ -317,11 +323,13 @@ Analyze and report:
 
 ```bash
 clawbooks summary 2026-03
+clawbooks summary FY2025
 clawbooks summary 2026-03 --base-currency USD
 clawbooks context 2026-03
 clawbooks context 2026-03 --base-currency USD
 clawbooks context 2026-03 --include-policy
 clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD
+clawbooks verify 2026-03 --balance 50000 --opening-balance 45000 --currency USD --diagnose
 clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --opening-balance 45000 --closing-balance 46250 --date-basis posting --gaps
 clawbooks review 2026-03 --source bank --confidence inferred,unclear --min-magnitude 100 --group-by category
 clawbooks review batch 2026-03 --out review-actions.jsonl --action confirm --confidence inferred
@@ -334,11 +342,13 @@ clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 
 `review` surfaces a materiality-first queue and explains why each item is in review. `review batch` writes append-only JSONL action files for inspection before you apply them with `clawbooks batch`.
 `summary`, `review`, `verify`, and `reconcile` now echo their resolved scope so operators can see the actual time window and filters that were applied.
+`documents` now supports debtor/creditor-style grouping and export without adding accounting rules: use `--direction`, `--status`, `--counterparty`, `--group-by counterparty`, or `documents counterparties`.
+`verify --diagnose` adds likely-cause hints for balance mismatches such as running-balance disagreement, duplicate-like rows, or currency-mixing.
 When you pass `--base-currency`, `summary`, `context`, and `pack` only use explicit `data.base_amount` + `data.base_currency` facts for converted totals. They do not derive converted totals from `data.fx_rate` or `data.price_usd`.
 `summary`, `context`, and `review` can be run in provisional mode when you explicitly choose exploratory output. `pack` is stricter: it refuses provisional runs unless you pass `--allow-provisional`.
 `pack --base-currency` is stricter again: it refuses partial FX coverage unless you also pass `--allow-partial-fx`.
 For non-CLI integrations, the same logic is available from `clawbooks/operations`.
-Period arguments support whole years (`2026`), months (`2026-03`), and explicit ranges (`2026-01/2026-06-30`).
+Period arguments support whole years (`2026`), months (`2026-03`), fiscal-year shorthand (`FY2025`), and explicit ranges (`2026-01/2026-06-30`).
 
 Maintenance:
 

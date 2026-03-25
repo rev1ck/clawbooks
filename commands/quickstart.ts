@@ -94,6 +94,7 @@ export function cmdQuickstart(params: {
         "Inspect the source files and normalize them into clawbooks events.",
         "If you need a starting point, generate an editable template with `clawbooks import scaffold <kind>`.",
         "For a bank or card statement export, `statement-csv` is usually the right scaffold.",
+        "For many opening balances, `opening-balances` is the shortest path to explicit starting facts.",
         "If recurring descriptions matter, keep optional factual hints in vendor-mappings.json and let the mapper consult that file.",
         "Preserve provenance such as data.ref, data.source_doc, data.source_row, data.source_hash, and data.provenance.",
         "Write events with `clawbooks record` or `clawbooks batch`.",
@@ -107,7 +108,7 @@ export function cmdQuickstart(params: {
       produce_outputs: [
         "Use `clawbooks summary` for precomputed movement totals and report sections.",
         "Use `clawbooks context` for event-level reasoning, snapshot-aware analysis, and policy-guided interpretation.",
-        "Use `clawbooks documents` for receivables, payables, settlement, and aging views.",
+        "Use `clawbooks documents` for receivables, payables, settlement, aging, and counterparty-grouped debtor/creditor views.",
         "Use `clawbooks assets` for asset register and depreciation views.",
         "Use `clawbooks pack` for exportable audit packs.",
         "Combine these with policy.md to produce P&L, balance sheet, cash flow, tax views, reconciliations, and custom reporting cuts.",

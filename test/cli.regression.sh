@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(pwd)"
 ROOT="$(mktemp -d)"
 LEDGER="$ROOT/ledger.jsonl"
 POLICY="$ROOT/policy.md"
@@ -104,6 +105,8 @@ assert(fs.readFileSync(policyExamplesPath, "utf8").includes('"name": "simple"'),
 assert(fs.readFileSync(policySimpleExamplePath, "utf8").includes("Example Studio LLC"), "policy --example simple should print the bundled simple policy");
 assert(/^\d+\.\d+\.\d+$/.test(versionOut), "version command should print a semver version");
 assert(helpOut.includes(`clawbooks v${versionOut}`), "help should include the current version");
+assert(helpOut.includes("FY2025"), "help should document fiscal-year shorthand");
+assert(helpOut.includes("opening-balances"), "help should list the opening-balances scaffold");
 assert(contextCompact.includes('"top_operating_expenses"'), "default context summary should use compact high-signal shape");
 assert(contextVerbose.includes('"by_type"'), "verbose context should include the full internal summary");
 console.log("cli.regression.sh: ok");
@@ -131,6 +134,99 @@ const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 if (report.event_count !== 6) throw new Error(`verify 2026 should include the full 2026 slice, got ${report.event_count}`);
 EOF
 
+VERIFY_DIAG_ROOT="$(mktemp -d)"
+mkdir -p "$VERIFY_DIAG_ROOT/.books"
+cat > "$VERIFY_DIAG_ROOT/.books/policy.md" <<'EOF'
+# Accounting policy
+
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Diagnose LLC
+reporting:
+  basis: cash
+  base_currency: USD
+  financial_year_end: 12-31
+```
+EOF
+cat > "$VERIFY_DIAG_ROOT/.books/ledger.jsonl" <<'EOF'
+{"ts":"2026-03-01T00:00:00.000Z","source":"manual","type":"opening_balance","data":{"amount":1000,"currency":"USD","account":"checking","category":"cash"},"id":"ob1","prev":"genesis"}
+{"ts":"2026-03-02T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-100,"currency":"USD","description":"Charge","balance":900},"id":"tx1","prev":"x"}
+{"ts":"2026-03-03T00:00:00.000Z","source":"bank","type":"income","data":{"amount":50,"currency":"USD","description":"Refund","balance":950},"id":"tx2","prev":"y"}
+EOF
+VERIFY_DIAG_JSON="$VERIFY_DIAG_ROOT/verify-diagnose.json"
+(cd "$VERIFY_DIAG_ROOT" && node "$REPO_ROOT/build/cli.js" verify 2026-03 --balance 975 --opening-balance 1000 --currency USD --diagnose 2>&1) > "$VERIFY_DIAG_JSON"
+grep -q '"diagnosis"' "$VERIFY_DIAG_JSON" || { echo "FAIL: verify --diagnose should include diagnosis output"; exit 1; }
+grep -q '"status": "attention"' "$VERIFY_DIAG_JSON" || { echo "FAIL: verify --diagnose should flag mismatches as attention"; exit 1; }
+grep -q 'last running balance' "$VERIFY_DIAG_JSON" || { echo "FAIL: verify --diagnose should mention running balance mismatch signals"; exit 1; }
+rm -rf "$VERIFY_DIAG_ROOT"
+
+FY_ROOT="$(mktemp -d)"
+mkdir -p "$FY_ROOT/.books"
+cat > "$FY_ROOT/.books/policy.md" <<'EOF'
+# Accounting policy
+
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Fiscal Year LLC
+reporting:
+  basis: cash
+  base_currency: USD
+  financial_year_end: 02-28
+```
+EOF
+cat > "$FY_ROOT/.books/ledger.jsonl" <<'EOF'
+{"ts":"2025-02-28T00:00:00.000Z","source":"bank","type":"income","data":{"amount":25,"currency":"USD","category":"prior_year"},"id":"fy0","prev":"genesis"}
+{"ts":"2025-03-01T00:00:00.000Z","source":"bank","type":"income","data":{"amount":100,"currency":"USD","category":"service_revenue"},"id":"fy1","prev":"x"}
+{"ts":"2026-02-28T00:00:00.000Z","source":"bank","type":"expense","data":{"amount":-40,"currency":"USD","category":"software"},"id":"fy2","prev":"y"}
+{"ts":"2026-03-01T00:00:00.000Z","source":"bank","type":"income","data":{"amount":10,"currency":"USD","category":"next_year"},"id":"fy3","prev":"z"}
+EOF
+FY_SUMMARY="$FY_ROOT/fy-summary.json"
+FY_EXPLICIT="$FY_ROOT/fy-explicit.json"
+(cd "$FY_ROOT" && node "$REPO_ROOT/build/cli.js" summary FY2026 2>&1) > "$FY_SUMMARY"
+(cd "$FY_ROOT" && node "$REPO_ROOT/build/cli.js" summary 2025-03-01/2026-02-28 2>&1) > "$FY_EXPLICIT"
+node - <<'EOF' "$FY_SUMMARY" "$FY_EXPLICIT"
+const fs = require("fs");
+const left = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const right = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
+if (JSON.stringify(left.movement_summary) !== JSON.stringify(right.movement_summary)) {
+  throw new Error("FY shorthand should match the explicit fiscal-year date range");
+}
+if (left.resolved_scope.after !== "2025-03-01T00:00:00.000Z") throw new Error(`unexpected FY after: ${left.resolved_scope.after}`);
+if (left.resolved_scope.before !== "2026-02-28T23:59:59.999Z") throw new Error(`unexpected FY before: ${left.resolved_scope.before}`);
+EOF
+FY_BAD_ROOT="$(mktemp -d)"
+mkdir -p "$FY_BAD_ROOT/.books"
+touch "$FY_BAD_ROOT/.books/ledger.jsonl"
+cat > "$FY_BAD_ROOT/.books/policy.md" <<'EOF'
+# Accounting policy
+
+## Structured policy hints
+
+```yaml
+entity:
+  legal_name: Broken FY LLC
+reporting:
+  basis: cash
+  base_currency: USD
+  financial_year_end: 13-40
+```
+EOF
+FY_BAD_LINT="$FY_BAD_ROOT/policy-lint.json"
+(cd "$FY_BAD_ROOT" && node "$REPO_ROOT/build/cli.js" policy lint 2>&1) > "$FY_BAD_LINT"
+grep -q '"code": "invalid_financial_year_end"' "$FY_BAD_LINT" || { echo "FAIL: policy lint should flag invalid financial_year_end"; exit 1; }
+FY_BAD_DOCTOR="$FY_BAD_ROOT/doctor.json"
+(cd "$FY_BAD_ROOT" && node "$REPO_ROOT/build/cli.js" doctor 2>&1) > "$FY_BAD_DOCTOR"
+grep -q '"financial_year_end"' "$FY_BAD_DOCTOR" || { echo "FAIL: doctor should surface financial_year_end diagnostics"; exit 1; }
+grep -q '13-40' "$FY_BAD_DOCTOR" || { echo "FAIL: doctor should include invalid financial_year_end details"; exit 1; }
+if (cd "$FY_BAD_ROOT" && node "$REPO_ROOT/build/cli.js" summary FY2026 >/dev/null 2>&1); then
+  echo "FAIL: FY shorthand should fail when financial_year_end is invalid"; exit 1
+fi
+rm -rf "$FY_ROOT" "$FY_BAD_ROOT"
+
 # --- .books/ directory tests ---
 
 BOOKS_ROOT="$(mktemp -d)"
@@ -139,7 +235,7 @@ BOOKS_CLEANUP() {
 }
 trap BOOKS_CLEANUP EXIT
 
-CLI="node $(pwd)/build/cli.js"
+CLI="node $REPO_ROOT/build/cli.js"
 
 # Test 1: init creates .books/ with ledger and policy
 (cd "$BOOKS_ROOT" && $CLI init 2>&1) > "$BOOKS_ROOT/init-output.txt"
@@ -180,6 +276,7 @@ test -f "$BOOKS_ROOT/.books-personal/ledger.jsonl" || { echo "FAIL: init --books
 grep -q '"name": "default"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include default"; exit 1; }
 grep -q '"name": "simple"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include simple"; exit 1; }
 grep -q '"name": "complex"' "$BOOKS_ROOT/examples.json" || { echo "FAIL: init --list-examples should include complex"; exit 1; }
+grep -q 'opening-balances' "$BOOKS_ROOT/examples.json" && { echo "FAIL: init examples output should not be polluted by scaffolds"; exit 1; }
 
 # Test 4: init --example simple selects the cash-basis example
 SIMPLE_DIR="$(mktemp -d)"
@@ -281,6 +378,9 @@ if grep -q -- '--recorded-by\|--notes\|--mappings' "$HELP_IMPORT_RECONCILE"; the
   echo "FAIL: import reconcile help should not advertise unsupported flags"
   exit 1
 fi
+HELP_IMPORT_SCAFFOLD="$EMPTY_DIR3/help-import-scaffold.txt"
+(cd "$EMPTY_DIR3" && $CLI import scaffold --help 2>&1) > "$HELP_IMPORT_SCAFFOLD"
+grep -q 'opening-balances' "$HELP_IMPORT_SCAFFOLD" || { echo "FAIL: import scaffold help should mention opening-balances"; exit 1; }
 
 HELP_REVIEW_BATCH="$EMPTY_DIR3/help-review-batch.txt"
 (cd "$EMPTY_DIR3" && $CLI review batch --help 2>&1) > "$HELP_REVIEW_BATCH"
@@ -306,6 +406,12 @@ test -f "$IMPORT_ROOT/clawbooks-imports/statement-csv/vendor-mappings.json" || {
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.mjs" || { echo "FAIL: statement scaffold should mention transaction_date"; exit 1; }
 grep -q 'transaction_date' "$IMPORT_ROOT/clawbooks-imports/statement-csv/mapper.py" || { echo "FAIL: python statement scaffold should mention transaction_date"; exit 1; }
 grep -q 'vendor-mappings.json' "$IMPORT_ROOT/clawbooks-imports/statement-csv/README.md" || { echo "FAIL: statement scaffold readme should mention vendor mappings"; exit 1; }
+IMPORT_OPENING_JSON="$IMPORT_ROOT/import-opening.json"
+(cd "$IMPORT_ROOT" && $CLI import scaffold opening-balances 2>&1) > "$IMPORT_OPENING_JSON"
+grep -q '"kind": "opening-balances"' "$IMPORT_OPENING_JSON" || { echo "FAIL: opening-balances scaffold should report its kind"; exit 1; }
+test -f "$IMPORT_ROOT/clawbooks-imports/opening-balances/opening-balances.csv" || { echo "FAIL: opening-balances scaffold should emit a csv template"; exit 1; }
+grep -q 'opening_balance' "$IMPORT_ROOT/clawbooks-imports/opening-balances/mapper.mjs" || { echo "FAIL: opening-balances mapper should emit opening_balance events"; exit 1; }
+grep -q 'account,amount,currency' "$IMPORT_ROOT/clawbooks-imports/opening-balances/opening-balances.csv" || { echo "FAIL: opening-balances scaffold should seed expected columns"; exit 1; }
 mkdir -p "$IMPORT_ROOT/.books"
 cat > "$IMPORT_ROOT/.books/ledger.jsonl" <<'EOF'
 {"ts":"2026-02-01T00:00:00.000Z","source":"statement_import","type":"expense","data":{"amount":-10,"currency":"USD","description":"NETFLIX","category":"software","confidence":"inferred"},"id":"hist1","prev":"genesis"}
@@ -591,6 +697,27 @@ grep -q '"settled": 1' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show 
 grep -q '"missing_invoice_id_documents": 1' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show one missing invoice_id"; exit 1; }
 grep -q '"invoice_id": "INV-001"' "$DOCUMENTS_JSON" || { echo "FAIL: documents should include INV-001"; exit 1; }
 grep -q '"open_balance": 300' "$DOCUMENTS_JSON" || { echo "FAIL: documents should show open balance for partial invoice"; exit 1; }
+
+DOCUMENTS_GROUPED="$DOCS_ROOT/documents-grouped.json"
+(cd "$DOCS_ROOT" && $CLI documents 2026-03 --direction issued --group-by counterparty 2>&1) > "$DOCUMENTS_GROUPED"
+grep -q '"group_by": "counterparty"' "$DOCUMENTS_GROUPED" || { echo "FAIL: documents should report counterparty grouping"; exit 1; }
+grep -q '"counterparty": "acme"' "$DOCUMENTS_GROUPED" || { echo "FAIL: grouped documents should include acme"; exit 1; }
+grep -q '"counterparty": "beta"' "$DOCUMENTS_GROUPED" || { echo "FAIL: grouped documents should include beta"; exit 1; }
+
+DOCUMENTS_FILTERED="$DOCS_ROOT/documents-filtered.json"
+(cd "$DOCS_ROOT" && $CLI documents 2026-03 --counterparty aws --direction received 2>&1) > "$DOCUMENTS_FILTERED"
+grep -q '"invoice_id": "BILL-001"' "$DOCUMENTS_FILTERED" || { echo "FAIL: documents --counterparty should filter to matching creditor"; exit 1; }
+
+DOCUMENTS_COUNTERPARTIES="$DOCS_ROOT/documents-counterparties.json"
+(cd "$DOCS_ROOT" && $CLI documents counterparties 2026-03 --match a 2>&1) > "$DOCUMENTS_COUNTERPARTIES"
+grep -q '"command": "documents counterparties"' "$DOCUMENTS_COUNTERPARTIES" || { echo "FAIL: documents counterparties should identify itself"; exit 1; }
+grep -q '"counterparty": "acme"' "$DOCUMENTS_COUNTERPARTIES" || { echo "FAIL: counterparties view should include acme"; exit 1; }
+grep -q '"counterparty": "aws"' "$DOCUMENTS_COUNTERPARTIES" || { echo "FAIL: counterparties view should include aws"; exit 1; }
+
+DOCUMENTS_COUNTERPARTIES_CSV="$DOCS_ROOT/documents-counterparties.csv"
+(cd "$DOCS_ROOT" && $CLI documents counterparties 2026-03 --format csv 2>&1) > "$DOCUMENTS_COUNTERPARTIES_CSV"
+grep -q 'counterparty' "$DOCUMENTS_COUNTERPARTIES_CSV" || { echo "FAIL: documents counterparties --format csv should print headers"; exit 1; }
+grep -q 'acme' "$DOCUMENTS_COUNTERPARTIES_CSV" || { echo "FAIL: documents counterparties csv should include acme"; exit 1; }
 
 SUMMARY_DOCS="$DOCS_ROOT/summary-docs.json"
 (cd "$DOCS_ROOT" && $CLI summary 2026-03 2>&1) > "$SUMMARY_DOCS"

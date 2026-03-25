@@ -2,10 +2,12 @@ import { readAll } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { type DateBasis } from "../imports.js";
 import { buildReconciliation } from "../operations.js";
+import { inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdReconcile(args: string[], ledgerPath: string) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
+  const { policyPath } = inferWorkflowPaths(ledgerPath);
+  const { after, before } = periodFromArgs(args, { policyPath });
   const dateBasis = (f["date-basis"] ?? "ledger") as DateBasis;
 
   try {

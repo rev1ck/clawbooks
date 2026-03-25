@@ -214,7 +214,7 @@ When the user gives you a CSV or other raw financial data:
 14. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency <currency>` when the source provides statement balances
 15. If you want a dedicated statement artifact, run `clawbooks import reconcile <events.jsonl> --statement profile.json`
 
-You are the parser. There is no import tool. You read the data and write the events.
+You are the parser. Clawbooks can scaffold predictable imports and statement CSV runs, but it still expects you to decide how source material becomes facts.
 
 When in doubt:
 
@@ -225,7 +225,7 @@ When in doubt:
 This workflow applies to statement-like sources generally: bank statements, card exports, processor settlements, exchange cash reports, and other row-based account activity exports.
 For bank and card statement exports, `statement-csv` is usually the correct starting scaffold.
 Prefer importing full source coverage when practical. Use report periods and date filters later in `summary`, `verify`, `review`, and `reconcile`.
-Period arguments support whole years like `2026`, months like `2026-03`, and explicit ranges like `2026-01/2026-06-30`.
+Period arguments support whole years like `2026`, months like `2026-03`, fiscal-year shorthand like `FY2025` when `policy.md` defines `reporting.financial_year_end`, and explicit ranges like `2026-01/2026-06-30`.
 
 If you want help maintaining recurring description hints:
 
@@ -247,6 +247,7 @@ Import scaffold kinds:
 - `generic-csv`: general transaction exports without statement semantics
 - `fills-csv`: broker or exchange fills/trade history exports
 - `manual-batch`: small hand-authored JSONL batches with explicit provenance
+- `opening-balances`: simple account/currency starting-balance tables that emit `opening_balance` events
 
 ## Capitalizing assets
 
@@ -302,10 +303,11 @@ After importing data from any source:
 1. During import, compute expected totals (count, debits, credits) from the source data
 2. Run `clawbooks verify <period> --source S` to check integrity (totals, hash, issues)
 3. Run `clawbooks verify <period> --balance <closing_balance> --opening-balance <opening_balance> --currency USD` when the source provides opening and closing balances
-4. Run `clawbooks reconcile <period> --source S --count N --debits N --credits N --gaps` to compare and detect date gaps
-5. Review `potential_duplicates` in verify output — same source/date/amount/description
-6. If `RECONCILED`, proceed. If `MISMATCH`, investigate and fix before generating reports
-7. Include the verify hash in report footers for audit trail
+4. Re-run with `--diagnose` if the balance check mismatches and you want likely-cause hints
+5. Run `clawbooks reconcile <period> --source S --count N --debits N --credits N --gaps` to compare and detect date gaps
+6. Review `potential_duplicates` in verify output — same source/date/amount/description
+7. If `RECONCILED`, proceed. If `MISMATCH`, investigate and fix before generating reports
+8. Include the verify hash in report footers for audit trail
 
 ### Document-to-payment reconciliation
 
@@ -581,6 +583,10 @@ clawbooks batch                     # append JSONL from stdin
 clawbooks log [--last N]            # view recent events
 clawbooks context [period]          # load policy + events for reasoning
 clawbooks documents [period]        # neutral settlement and aging view
+clawbooks documents [period] --group-by counterparty
+                                     # debtor/creditor style grouping by raw counterparty
+clawbooks documents counterparties [period]
+                                     # list raw counterparties seen in document events
 clawbooks policy                    # print policy.md
 clawbooks policy lint               # advisory policy completeness / contradiction check
                                      # includes severity-tagged checks and workflow coverage
@@ -589,6 +595,8 @@ clawbooks verify [period]           # integrity + chain + balance check + duplic
 clawbooks verify --balance N        # cross-check closing balance against period movement
 clawbooks verify --balance N --opening-balance N
                                      # cross-check closing balance against opening + movement
+clawbooks verify [period] --diagnose
+                                     # likely-cause hints for mismatched balance checks
 clawbooks reconcile [period] -S     # compare expected vs actual totals
 clawbooks reconcile -S --gaps       # also detect date gaps >7 days
 clawbooks reconcile -S --date-basis posting --opening-balance 100 --closing-balance 250

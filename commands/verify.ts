@@ -5,8 +5,8 @@ import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdVerify(args: string[], ledgerPath: string) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
   const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const { after, before } = periodFromArgs(args, { policyPath: workflowPaths.policyPath });
   const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const all = readAll(ledgerPath);
   const report = analyzeVerification(all, {
@@ -16,6 +16,7 @@ export function cmdVerify(args: string[], ledgerPath: string) {
     balance: f.balance !== undefined ? parseFloat(f.balance) : undefined,
     openingBalance: f["opening-balance"] !== undefined ? parseFloat(f["opening-balance"]) : undefined,
     currency: f.currency,
+    diagnose: f.diagnose === "true",
   });
 
   console.log(JSON.stringify({

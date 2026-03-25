@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { buildAssetRegister, type AssetBaseRecord, type AssetRegister, type DisposedAssetRecord, type WrittenOffAssetRecord } from "./assets.js";
 import { buildCompactContextSummary, buildContextSummary } from "./context.js";
-import { buildDocumentSettlementData } from "./documents.js";
+import { buildDocumentCounterpartySummary, buildDocumentSettlementData } from "./documents.js";
 import { ASSET_EVENT_TYPES, DOCUMENT_TYPES, INFLOW_TYPES, META_TYPES, OUTFLOW_TYPES, enforceSign } from "./event-types.js";
 import { filterByDateBasis, type DateBasis } from "./imports.js";
 import { computeId, filter, hashLine, latestSnapshot, type LedgerEvent } from "./ledger.js";
-import { classifyPolicyReadiness, lintPolicyText } from "./policy.js";
+import { classifyPolicyReadiness, financialYearEndFromPolicy, lintPolicyText } from "./policy.js";
 import { applyReclassifications, buildCorrectionSummary, buildConfirmedSet, buildReclassifyMap, buildReviewMateriality } from "./review.js";
 import { buildBaseCurrencySummary, buildCategoryRollup, buildFxCoverage, buildReportingSections, convertedAmountWarnings, round2, sortByTimestamp } from "./reporting.js";
 import { VALID_CLASSIFICATION_BASES, deriveReportingMode } from "./workflow-state.js";
@@ -75,6 +75,8 @@ export function buildDocumentReport(opts: {
   asOf?: string;
   status?: string;
   direction?: string;
+  counterparty?: string;
+  groupBy?: string;
 }) {
   const asOf = opts.asOf ?? new Date().toISOString();
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before, source: opts.source }));
@@ -83,16 +85,69 @@ export function buildDocumentReport(opts: {
   let items = data.items;
   if (opts.status) items = items.filter((item) => item.status === opts.status);
   if (opts.direction) items = items.filter((item) => item.direction === opts.direction);
+  if (opts.counterparty) {
+    const needle = opts.counterparty.toLowerCase();
+    items = items.filter((item) => item.counterparty.some((name) => name.toLowerCase().includes(needle)));
+  }
+  const grouped = opts.groupBy === "counterparty"
+    ? buildDocumentCounterpartySummary(items)
+    : null;
 
   return {
     as_of: asOf,
+    filters: {
+      after: opts.after ?? null,
+      before: opts.before ?? null,
+      source: opts.source ?? null,
+      status: opts.status ?? null,
+      direction: opts.direction ?? null,
+      counterparty: opts.counterparty ?? null,
+      group_by: opts.groupBy ?? null,
+    },
     settlement_summary: data.settlement_summary,
     documents_by_direction: data.documents_by_direction,
     receivable_candidates: data.receivable_candidates,
     payable_candidates: data.payable_candidates,
     documents_missing_invoice_id: data.documents_missing_invoice_id,
     unmatched_cash: data.unmatched_cash,
+    ...(grouped ? { grouped } : {}),
     items,
+  };
+}
+
+export function buildDocumentCounterpartyReport(opts: {
+  all: LedgerEvent[];
+  after?: string;
+  before?: string;
+  source?: string;
+  asOf?: string;
+  status?: string;
+  direction?: string;
+  match?: string;
+}) {
+  const report = buildDocumentReport({
+    all: opts.all,
+    after: opts.after,
+    before: opts.before,
+    source: opts.source,
+    asOf: opts.asOf,
+    status: opts.status,
+    direction: opts.direction,
+    groupBy: "counterparty",
+  });
+  let counterparties = report.grouped ?? [];
+  if (opts.match) {
+    const needle = opts.match.toLowerCase();
+    counterparties = counterparties.filter((row) => row.counterparty.toLowerCase().includes(needle));
+  }
+  return {
+    as_of: report.as_of,
+    filters: {
+      ...report.filters,
+      match: opts.match ?? null,
+    },
+    settlement_summary: report.settlement_summary,
+    counterparties,
   };
 }
 
@@ -143,6 +198,7 @@ export function analyzeVerification(all: LedgerEvent[], opts?: {
   balance?: number;
   openingBalance?: number;
   currency?: string;
+  diagnose?: boolean;
 }) {
   const isFiltered = Boolean(opts?.source || opts?.after || opts?.before);
   const events = sortByTimestamp(filter(all, { after: opts?.after, before: opts?.before, source: opts?.source }));
@@ -267,6 +323,14 @@ export function analyzeVerification(all: LedgerEvent[], opts?: {
     duplicateGroups[key].push(event.id);
   }
   const potentialDuplicates = Object.values(duplicateGroups).filter((ids) => ids.length > 1);
+  const diagnosis = opts?.diagnose ? buildVerificationDiagnosis({
+    events,
+    byCurrency,
+    potentialDuplicates,
+    balanceCheck,
+    currency: opts.currency,
+    openingBalance: opts.openingBalance,
+  }) : null;
 
   const hash = createHash("sha256")
     .update(events.map((event) => event.id).join(","))
@@ -282,8 +346,110 @@ export function analyzeVerification(all: LedgerEvent[], opts?: {
     ...(isFiltered ? {} : { chain_valid: chainValid }),
     ...(balanceCheck ? { balance_check: balanceCheck } : {}),
     ...(potentialDuplicates.length > 0 ? { potential_duplicates: potentialDuplicates } : {}),
+    ...(diagnosis ? { diagnosis } : {}),
     hash,
     issues,
+  };
+}
+
+function buildVerificationDiagnosis(params: {
+  events: LedgerEvent[];
+  byCurrency: Record<string, { count: number; debits: number; credits: number }>;
+  potentialDuplicates: string[][];
+  balanceCheck?: {
+    expected: number;
+    actual: number;
+    difference: number;
+    matches: boolean;
+    opening_balance?: number;
+    net_movement?: number;
+    closing_balance?: number;
+  };
+  currency?: string;
+  openingBalance?: number;
+}) {
+  const observations: string[] = [];
+  const possibleCauses: string[] = [];
+  const scopedEvents = params.events.filter((event) => !META_TYPES.has(event.type));
+  const amountEvents = scopedEvents.filter((event) => {
+    const amount = Number(event.data.amount);
+    return !Number.isNaN(amount) && (!params.currency || String(event.data.currency) === params.currency);
+  });
+  const runningBalanceEvents = amountEvents.filter((event) => !Number.isNaN(Number(event.data.balance)));
+
+  observations.push(`${amountEvents.length} non-meta event(s) were included in the balance diagnosis scope.`);
+  if (params.currency) {
+    observations.push(`Diagnosis scope was filtered to currency ${params.currency}.`);
+  } else if (Object.keys(params.byCurrency).length > 1) {
+    possibleCauses.push("Multiple currencies are present in scope. Re-run with --currency to avoid mixing native balances.");
+  }
+
+  if (params.currency && amountEvents.length === 0) {
+    possibleCauses.push(`No non-meta events matched currency ${params.currency} in the resolved scope.`);
+  }
+
+  const firstRunning = runningBalanceEvents[0];
+  const lastRunning = runningBalanceEvents[runningBalanceEvents.length - 1];
+  const firstRunningAmount = firstRunning ? Number(firstRunning.data.amount) : null;
+  const firstRunningBalance = firstRunning ? Number(firstRunning.data.balance) : null;
+  const lastRunningBalance = lastRunning ? Number(lastRunning.data.balance) : null;
+  const impliedOpeningBalance = firstRunning && firstRunningAmount !== null && firstRunningBalance !== null
+    ? round2(firstRunningBalance - firstRunningAmount)
+    : null;
+
+  const statementBalanceSignals = {
+    running_balance_event_count: runningBalanceEvents.length,
+    first_running_balance_ts: firstRunning?.ts ?? null,
+    first_running_balance: firstRunningBalance,
+    implied_opening_balance: impliedOpeningBalance,
+    last_running_balance_ts: lastRunning?.ts ?? null,
+    last_running_balance: lastRunningBalance,
+  };
+
+  if (runningBalanceEvents.length === 0) {
+    observations.push("No data.balance values were present in scope, so statement-style balance diagnosis is limited.");
+  } else {
+    observations.push(`${runningBalanceEvents.length} event(s) included a running balance in data.balance.`);
+  }
+
+  if (params.balanceCheck && !params.balanceCheck.matches) {
+    if (params.potentialDuplicates.length > 0) {
+      possibleCauses.push("Potential duplicate transactions were detected in scope. Review verify output for duplicate groups.");
+    }
+    if (params.openingBalance !== undefined && impliedOpeningBalance !== null && Math.abs(impliedOpeningBalance - params.openingBalance) >= 0.01) {
+      possibleCauses.push(`The supplied opening balance ${params.openingBalance} does not match the first running balance's implied opening ${impliedOpeningBalance}.`);
+    }
+    if (lastRunningBalance !== null && Math.abs(lastRunningBalance - params.balanceCheck.expected) >= 0.01) {
+      possibleCauses.push(`The last running balance in scope (${lastRunningBalance}) does not match the expected closing balance ${params.balanceCheck.expected}.`);
+    }
+    if (lastRunningBalance !== null && Math.abs(lastRunningBalance - params.balanceCheck.actual) < 0.01 && params.openingBalance !== undefined) {
+      observations.push("The computed closing balance matches the last running balance in scope.");
+    }
+
+    const dates = amountEvents.map((event) => event.ts.slice(0, 10)).filter((value, index, allValues) => allValues.indexOf(value) === index).sort();
+    const largeGaps: string[] = [];
+    for (let index = 1; index < dates.length; index++) {
+      const previous = new Date(dates[index - 1]);
+      const current = new Date(dates[index]);
+      const diffDays = Math.round((current.getTime() - previous.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 7) largeGaps.push(`${dates[index - 1]} → ${dates[index]} (${diffDays} days)`);
+    }
+    if (largeGaps.length > 0) {
+      possibleCauses.push(`There are large date gaps in scope that may indicate missing rows: ${largeGaps.slice(0, 3).join(", ")}.`);
+    }
+    if (possibleCauses.length === 0) {
+      possibleCauses.push("No single mechanical cause stood out. Check statement opening/closing balances, date basis, and source coverage.");
+    }
+  }
+
+  return {
+    enabled: true,
+    status: params.balanceCheck && !params.balanceCheck.matches
+      ? "attention"
+      : "ok",
+    observations,
+    possible_causes: possibleCauses,
+    statement_balance_signals: statementBalanceSignals,
   };
 }
 
@@ -1391,6 +1557,7 @@ export function buildDiagnostics(params: {
 }) {
   const policyReadiness = classifyPolicyReadiness(params.policyText, params.policyPath);
   const lint = lintPolicyText(params.policyText, params.policyPath);
+  const financialYearEnd = financialYearEndFromPolicy(params.policyText);
   const verification = params.ledgerExists ? analyzeVerification(params.all) : null;
   const nonMetaEvents = params.all.filter((event) => !META_TYPES.has(event.type));
   const openingBalances = params.all.filter((event) => event.type === "opening_balance");
@@ -1445,6 +1612,9 @@ export function buildDiagnostics(params: {
   if (policyReadiness.provisional) {
     operatorWarnings.push("Policy is still starter/provisional. External outputs should be marked provisional.");
   }
+  if (!financialYearEnd.valid && financialYearEnd.error) {
+    operatorWarnings.push(financialYearEnd.error);
+  }
   if (snapshotStatus === "none" && nonMetaEvents.length >= 25) {
     operatorWarnings.push("No snapshot has been saved yet. Consider `clawbooks snapshot <period> --save` after a reporting run.");
   }
@@ -1472,6 +1642,10 @@ export function buildDiagnostics(params: {
   if (policyReadiness.provisional) {
     reportingReadiness = "caution";
     readinessReasons.push("policy.md is still starter/provisional.");
+  }
+  if (!financialYearEnd.valid && financialYearEnd.error) {
+    reportingReadiness = "caution";
+    readinessReasons.push("reporting.financial_year_end is missing or invalid.");
   }
   if (issueCount > 0 || chainValid === false) {
     reportingReadiness = "caution";
@@ -1566,6 +1740,7 @@ export function buildDiagnostics(params: {
         lint_status: lint.status,
         lint_issue_count: lint.issues.length,
         lint_suggestion_count: lint.suggestions.length,
+        financial_year_end: financialYearEnd,
         top_issues: lint.issues.slice(0, 3),
         top_suggestions: lint.suggestions.slice(0, 3),
       },

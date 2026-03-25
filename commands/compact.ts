@@ -1,10 +1,12 @@
 import { readAll, rewrite } from "../ledger.js";
 import { flags, periodFromArgs } from "../cli-helpers.js";
 import { buildCompactPlan } from "../operations.js";
+import { inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdCompact(args: string[], ledgerPath: string) {
   const f = flags(args);
-  const { before } = periodFromArgs(args);
+  const { policyPath } = inferWorkflowPaths(ledgerPath);
+  const { before } = periodFromArgs(args, { policyPath });
 
   if (!before) {
     console.error("Usage: clawbooks compact <period> or --before <date>");

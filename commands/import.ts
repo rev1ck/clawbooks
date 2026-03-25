@@ -30,7 +30,7 @@ type ImportParams = {
   ledgerPath: string;
 };
 
-type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch";
+type ScaffoldKind = "statement-csv" | "generic-csv" | "fills-csv" | "manual-batch" | "opening-balances";
 
 type ImportRunField = "transaction_date" | "posting_date" | "description" | "debit" | "credit" | "amount" | "balance" | "currency" | "ref" | "category" | "type" | "confidence";
 
@@ -84,7 +84,7 @@ type ImportSessionRecord = {
   duplicate_refs: string[];
 };
 
-const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch"];
+const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch", "opening-balances"];
 
 const IMPORT_RUN_ALIASES: Record<ImportRunField, string[]> = {
   transaction_date: ["transaction_date", "transaction date", "date", "trans date", "transactiondate"],
@@ -221,6 +221,14 @@ function vendorMappingsTemplate(): string {
       },
     ],
   }, null, 2) + "\n";
+}
+
+function openingBalancesTemplate(): string {
+  return [
+    "ts,account,amount,currency,category,description,source",
+    "2026-01-01,checking,50000,USD,cash,Opening bank balance,opening_balances_import",
+    "2026-01-01,credit_card,-12000,USD,liability,Opening credit card balance,opening_balances_import",
+  ].join("\n") + "\n";
 }
 
 function defaultOutDir(kind: ScaffoldKind, booksDir: string | null): string {
@@ -492,6 +500,15 @@ function scaffoldReadme(kind: ScaffoldKind): string {
       "- Keep the batch file small and reviewable before appending.",
       "",
     ],
+    "opening-balances": [
+      "## Opening balances checklist",
+      "",
+      "- One row per account and currency at the opening date.",
+      "- Use signed amounts and factual categories such as cash, liability, receivable, or payable.",
+      "- Keep descriptions factual; opening balances are setup facts, not report-period activity.",
+      "- Review the emitted opening_balance events before appending.",
+      "",
+    ],
   };
 
   return [...common, ...byKind[kind]].join("\n");
@@ -703,6 +720,44 @@ for (const event of batch) {
   process.stdout.write(JSON.stringify(event) + "\\n");
 }
 `,
+    "opening-balances": `${sharedHelpers}
+const inputPath = process.argv[2];
+if (!inputPath) {
+  console.error("Usage: node mapper.mjs <opening-balances.csv>");
+  process.exit(1);
+}
+
+const rows = csvRows(inputPath);
+const events = rows
+  .map((row) => {
+    const amount = numberOrNull(row.amount);
+    if (amount === null) return null;
+    return {
+      ts: isoDate(row.ts || row.date || row.as_of),
+      source: row.source || "opening_balances_import",
+      type: "opening_balance",
+      data: {
+        amount,
+        currency: row.currency || "USD",
+        account: row.account || "unspecified",
+        category: row.category || "opening_balance",
+        description: row.description || "Opening balance",
+        confidence: "clear",
+        source_doc: inputPath,
+        source_row: row.__row,
+        provenance: {
+          import_kind: "opening-balances",
+          row_snapshot: row,
+        },
+      },
+    };
+  })
+  .filter(Boolean);
+
+for (const event of events) {
+  process.stdout.write(JSON.stringify(event) + "\\n");
+}
+`,
   };
 
   return templates[kind];
@@ -905,6 +960,41 @@ batch = [
 ]
 
 for event in batch:
+    print(json.dumps(event))
+`,
+    "opening-balances": `${sharedHelpers}
+if len(sys.argv) < 2:
+    print("Usage: python3 mapper.py <opening-balances.csv>", file=sys.stderr)
+    sys.exit(1)
+
+input_path = sys.argv[1]
+events = []
+
+for row in csv_rows(input_path):
+    amount = number_or_none(row.get("amount"))
+    if amount is None:
+        continue
+    events.append({
+        "ts": iso_date(row.get("ts") or row.get("date") or row.get("as_of")),
+        "source": row.get("source") or "opening_balances_import",
+        "type": "opening_balance",
+        "data": {
+            "amount": amount,
+            "currency": row.get("currency") or "USD",
+            "account": row.get("account") or "unspecified",
+            "category": row.get("category") or "opening_balance",
+            "description": row.get("description") or "Opening balance",
+            "confidence": "clear",
+            "source_doc": input_path,
+            "source_row": row.get("__row"),
+            "provenance": {
+                "import_kind": "opening-balances",
+                "row_snapshot": row,
+            },
+        },
+    })
+
+for event in events:
     print(json.dumps(event))
 `,
   };
@@ -1496,13 +1586,14 @@ export function cmdImport(args: string[], params: ImportParams) {
         { name: "generic-csv", description: "General transaction or event exports without statement semantics" },
         { name: "fills-csv", description: "Broker or exchange fills / trade-history style exports" },
         { name: "manual-batch", description: "Small hand-authored JSONL batches with explicit provenance" },
+        { name: "opening-balances", description: "Simple opening-balance tables for account/currency starting positions" },
       ],
     }, null, 2));
     return;
   }
 
   if (p[0] !== "scaffold") {
-    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]\n       clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append]\n       clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
+    console.error("Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch|opening-balances> [--out DIR]\n       clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append]\n       clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]");
     process.exit(1);
   }
 
@@ -1521,6 +1612,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     { path: join(outDir, "mapper.py"), content: scaffoldPythonMapper(kind) },
     ...(kind === "statement-csv" ? [{ path: join(outDir, "statement-profile.json"), content: statementProfileTemplate() }] : []),
     ...(kind === "statement-csv" ? [{ path: join(outDir, "vendor-mappings.json"), content: vendorMappingsTemplate() }] : []),
+    ...(kind === "opening-balances" ? [{ path: join(outDir, "opening-balances.csv"), content: openingBalancesTemplate() }] : []),
   ];
 
   const fileResults = files.map((file) => {

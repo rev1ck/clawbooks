@@ -165,6 +165,7 @@ Quick examples:
   clawbooks init
   clawbooks import scaffold --list
   clawbooks import scaffold statement-csv
+  clawbooks import scaffold opening-balances
   clawbooks import run statement.csv --statement statement-profile.json
   clawbooks import check staged.jsonl --statement statement-profile.json --save-session
   clawbooks import mappings suggest --source statement_import
@@ -179,10 +180,14 @@ Quick examples:
   clawbooks policy --list-examples
   clawbooks policy --example simple
   clawbooks summary 2026-03
+  clawbooks summary FY2025
   clawbooks summary 2026-03 --base-currency USD
   clawbooks context 2026-03 --include-policy
   clawbooks context 2026-03 --base-currency USD
   clawbooks verify 2026-03 --balance 153869.05 --currency USD
+  clawbooks verify 2026-03 --balance 153869.05 --opening-balance 150000 --currency USD --diagnose
+  clawbooks documents FY2025 --direction received --status open --group-by counterparty
+  clawbooks documents counterparties FY2025 --direction issued
   clawbooks pack 2026-03 --out ./march-pack
   clawbooks pack 2026-03 --out ./march-pack --base-currency USD
   clawbooks pack 2026-03 --out ./march-pack --allow-provisional
@@ -212,6 +217,8 @@ Common flags:
   --verbose                   Print full raw payloads where supported
   --include-policy            Inline the full policy in context output
   --base-currency <C>         Request explicit converted reporting in currency C where data.base_amount exists
+  --group-by <field>          Group certain outputs, for example documents --group-by counterparty
+  --format <kind>             json (default) or csv where supported
   --last   <N>                Last N events (log only, default 20)
   --dest <DIR>                Destination directory for skill installation
   --force                     Replace an existing installed skill
@@ -269,11 +276,13 @@ Verify flags:
   --balance  <N>              Cross-check net balance against expected value
   --opening-balance <N>       Treat expected balance as opening balance + period movement
   --currency <C>              Filter balance check to a specific currency
+  --diagnose                  Add likely-cause hints for balance mismatches and scope issues
 
 Period format:
   2026                        Whole year
   2026-03                     Single month
   2026-01/2026-06-30          Date range
+  FY2025                      Fiscal year ending in 2025, using reporting.financial_year_end
 
 Environment:
   CLAWBOOKS_BOOKS     Books directory (default: auto-detected .books/)
@@ -301,16 +310,19 @@ Examples:
   clawbooks init
   clawbooks init --books .books-personal
   clawbooks init --example simple`,
-    "import-scaffold": `Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch> [--out DIR]
+    "import-scaffold": `Usage: clawbooks import scaffold <statement-csv|generic-csv|fills-csv|manual-batch|opening-balances> [--out DIR]
 
 Emit editable mapper templates. For statement-csv, clawbooks also emits:
   - statement-profile.json
   - vendor-mappings.json
+For opening-balances, clawbooks also emits:
+  - opening-balances.csv
 
 Scaffold output also reports whether the current run is policy_grounded or provisional.
 
 Examples:
   clawbooks import scaffold statement-csv
+  clawbooks import scaffold opening-balances
   clawbooks import scaffold generic-csv --out ./imports/generic`,
     "import-run": `Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [flags]
 
@@ -391,6 +403,7 @@ Examples:
 Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
 When --base-currency is set, clawbooks adds a converted reporting view using explicit data.base_amount facts only.
 Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
+Period may be a calendar range like 2026-03 or a fiscal-year shorthand like FY2025 when policy.md defines reporting.financial_year_end.
 
 Examples:
   clawbooks summary 2026-03
@@ -399,6 +412,7 @@ Examples:
     policy: `Usage: clawbooks policy [lint] [--path] [--list-examples] [--example NAME]
 
 Print the current policy, lint it, or inspect bundled starter examples.
+Policy lint validates reporting.financial_year_end so fiscal-year shorthand fails early and explicitly when malformed.
 
 Examples:
   clawbooks policy
@@ -411,10 +425,11 @@ Compare imported totals to explicit expectations.
 Examples:
   clawbooks reconcile 2026-03 --source bank --count 50 --debits -12000 --credits 14500
   clawbooks reconcile 2026-03 --source bank --opening-balance 45000 --closing-balance 46250 --date-basis posting`,
-    verify: `Usage: clawbooks verify [period] [--balance N] [--opening-balance N] [--currency C]
+    verify: `Usage: clawbooks verify [period] [--balance N] [--opening-balance N] [--currency C] [--diagnose]
 
 Run integrity, duplicate, sign, and balance checks on the ledger.
 Verify echoes the resolved scope so period handling is explicit.
+Use --diagnose to add likely-cause hints such as currency-mixing, duplicate imports, or opening-balance mismatch signals.
 
 Examples:
   clawbooks verify 2026-03
@@ -464,12 +479,16 @@ Append JSONL events from stdin and surface the run-level grounding state.
 Examples:
   cat events.jsonl | clawbooks batch
   cat events.jsonl | clawbooks batch --classification-basis manual_operator`,
-    documents: `Usage: clawbooks documents [period] [--as-of ISO_DATE]
+    documents: `Usage: clawbooks documents [period] [--as-of ISO_DATE] [--direction issued|received] [--status open|partial|settled|overpaid] [--counterparty NAME] [--group-by counterparty] [--format json|csv]
+       clawbooks documents counterparties [period] [--as-of ISO_DATE] [--direction issued|received] [--status open|partial|settled|overpaid] [--match TEXT] [--format json|csv]
 
 Show neutral settlement, aging, and document status views.
+Use grouping or the counterparties view to produce debtor/creditor-style listings without adding accounting rules.
 
 Example:
-  clawbooks documents 2026-03 --as-of 2026-03-31T00:00:00.000Z`,
+  clawbooks documents 2026-03 --as-of 2026-03-31T00:00:00.000Z
+  clawbooks documents FY2025 --direction received --status open --group-by counterparty
+  clawbooks documents counterparties FY2025 --direction issued --format csv`,
     pack: `Usage: clawbooks pack [period] [--out DIR] [--base-currency C] [--allow-partial-fx] [--allow-provisional]
 
 Generate an audit pack with CSVs, JSON, and the applied policy.

@@ -5,9 +5,9 @@ import { buildWorkflowStatus, inferWorkflowPaths } from "../workflow-state.js";
 
 export function cmdSummary(args: string[], ledgerPath: string) {
   const f = flags(args);
-  const { after, before } = periodFromArgs(args);
   const allowProvisional = f["allow-provisional"] === "true";
   const workflowPaths = inferWorkflowPaths(ledgerPath);
+  const { after, before } = periodFromArgs(args, { policyPath: workflowPaths.policyPath });
   const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
   const summary = buildSummary({
     all: readAll(ledgerPath),
