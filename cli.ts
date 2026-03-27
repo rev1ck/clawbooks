@@ -328,10 +328,13 @@ Examples:
 
 Turn a predictable statement CSV into staged JSONL without writing a custom mapper first.
 Auto-detects common statement columns and lets you override them explicitly with --*-col flags.
+Use --skip-rows when the file has banner or preamble lines before the real header.
+Use --source-doc, --source-hash, and --recorded-via when a caller needs staged events to preserve outer-system provenance.
 If you pass --statement, clawbooks also runs import-check against the staged output.
 
 Examples:
   clawbooks import run statement.csv
+  clawbooks import run statement.csv --skip-rows 1 --source-doc "statement.csv"
   clawbooks import run statement.csv --statement statement-profile.json
   clawbooks import run statement.csv --statement statement-profile.json --append`,
     "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID] [--classification-basis BASIS]

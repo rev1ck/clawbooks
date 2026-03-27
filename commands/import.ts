@@ -304,7 +304,7 @@ function detectDelimiter(text: string): string {
   return scored[0]?.score && scored[0].score > 1 ? scored[0].candidate : ",";
 }
 
-function parseCsvFile(path: string, delimiterFlag?: string): ParsedCsv {
+function parseCsvFile(path: string, delimiterFlag?: string, skipRows = 0): ParsedCsv {
   if (!existsSync(path)) {
     console.error(`No file found at ${path}`);
     process.exit(1);
@@ -318,18 +318,23 @@ function parseCsvFile(path: string, delimiterFlag?: string): ParsedCsv {
 
   const delimiter = delimiterFlag ?? detectDelimiter(text);
   const rows = parseDelimited(text, delimiter).filter((row) => row.some((cell) => cell.trim() !== ""));
-  if (rows.length < 2) {
+  const effectiveRows = rows.slice(skipRows);
+  if (effectiveRows.length !== rows.length && effectiveRows.length < 2) {
+    console.error(`CSV file must contain a header and at least one data row after skipping ${skipRows} row(s): ${path}`);
+    process.exit(1);
+  }
+  if (effectiveRows.length < 2) {
     console.error(`CSV file must contain a header and at least one data row: ${path}`);
     process.exit(1);
   }
 
-  const headers = rows[0].map((header) => header.trim());
+  const headers = effectiveRows[0].map((header) => header.trim());
   return {
     delimiter,
     headers,
-    rows: rows.slice(1).map((cells, index) => {
+    rows: effectiveRows.slice(1).map((cells, index) => {
       const row = Object.fromEntries(headers.map((header, cellIndex) => [header, (cells[cellIndex] ?? "").trim()]));
-      row.__row = String(index + 2);
+      row.__row = String(index + 2 + skipRows);
       return row;
     }),
   };
@@ -1013,11 +1018,18 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (p[0] === "run") {
     const inputPath = p[1];
     if (!inputPath) {
-      console.error("Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [--mappings PATH] [--source NAME] [--currency CUR] [--order auto|newest-first|oldest-first] [--transaction-date-col COL] [--posting-date-col COL] [--description-col COL] [--amount-col COL] [--debit-col COL] [--credit-col COL] [--balance-col COL] [--ref-col COL] [--category-col COL] [--type-col COL] [--confidence-col COL] [--classification-basis BASIS] [--save-session]");
+      console.error("Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [--mappings PATH] [--source NAME] [--currency CUR] [--order auto|newest-first|oldest-first] [--skip-rows N] [--source-doc NAME] [--source-hash HASH] [--recorded-via VALUE] [--transaction-date-col COL] [--posting-date-col COL] [--description-col COL] [--amount-col COL] [--debit-col COL] [--credit-col COL] [--balance-col COL] [--ref-col COL] [--category-col COL] [--type-col COL] [--confidence-col COL] [--classification-basis BASIS] [--save-session]");
       process.exit(1);
     }
 
-    const parsedCsv = parseCsvFile(resolve(inputPath), f.delimiter);
+    const skipRowsRaw = f["skip-rows"] ?? "0";
+    const skipRows = Number(skipRowsRaw);
+    if (!Number.isInteger(skipRows) || skipRows < 0) {
+      console.error("Invalid --skip-rows. Use a non-negative integer.");
+      process.exit(1);
+    }
+
+    const parsedCsv = parseCsvFile(resolve(inputPath), f.delimiter, skipRows);
     const columns = resolveImportRunColumns(parsedCsv.headers, f);
     if (!columns.posting_date && !columns.transaction_date) {
       console.error("import run needs a posting date or transaction date column. Use --posting-date-col or --transaction-date-col if auto-detection misses it.");
@@ -1075,6 +1087,8 @@ export function cmdImport(args: string[], params: ImportParams) {
       const category = mapping?.category ?? explicitCategory ?? "uncategorized";
       const confidence = mapping?.confidence ?? explicitConfidence ?? "inferred";
 
+      const sourceDoc = f["source-doc"] ?? resolve(inputPath);
+      const sourceHash = f["source-hash"] ?? null;
       stagedEvents.push({
         ts,
         source: f.source ?? profile.source ?? "statement_import",
@@ -1089,11 +1103,15 @@ export function cmdImport(args: string[], params: ImportParams) {
           transaction_date: transactionDate,
           posting_date: postingDate,
           balance,
-          source_doc: resolve(inputPath),
+          source_doc: sourceDoc,
           source_row: row.__row,
+          ...(sourceHash ? { source_hash: sourceHash } : {}),
+          ...(f["recorded-via"] ? { recorded_via: f["recorded-via"] } : {}),
           provenance: {
             import_kind: "statement-csv",
             runner: "clawbooks import run",
+            source_doc: sourceDoc,
+            ...(sourceHash ? { source_hash: sourceHash } : {}),
             row_snapshot: row,
           },
         },
