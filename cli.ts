@@ -113,7 +113,7 @@ Import:
   import scaffold --list      List available import scaffolds
   import run statement.csv    Stage a predictable statement CSV without hand-writing a mapper
   import check staged.jsonl   Check a staged JSONL import against explicit expectations
-  import mappings suggest     Suggest recurring vendor hints from ledger history
+  import mappings suggest     Suggest recurring vendor hints from ledger history or a staged import file
   import mappings lookup X    Explain how a description matches current mappings/history
   import sessions list        List saved import-session records
 
@@ -168,7 +168,9 @@ Quick examples:
   clawbooks import scaffold opening-balances
   clawbooks import run statement.csv --statement statement-profile.json
   clawbooks import check staged.jsonl --statement statement-profile.json --save-session
+  cat staged.jsonl | clawbooks batch --dry-run --import-session import-session-123
   clawbooks import mappings suggest --source statement_import
+  clawbooks import mappings suggest staged.jsonl --min-occurrences 2
   clawbooks import mappings lookup "NETFLIX"
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
   clawbooks import reconcile staged.jsonl --statement statement-profile.json
@@ -347,6 +349,7 @@ Validate staged JSONL before append. --statement loads explicit expectations suc
 
 If a vendor mappings file is present, import check surfaces coverage and consistency signals.
 Saved import sessions capture grounding state such as classification_basis, program_hash, policy_hash, workflow acknowledgment, and source metadata.
+Saved or updated sessions also rebuild a derived \`imports/session-index.json\` summary for fast duplicate/source-history checks.
 Import full source coverage when practical, then cut periods later in summary/verify/review.
 
 Examples:
@@ -356,14 +359,16 @@ Examples:
     "import-mappings": `Usage: clawbooks import mappings <suggest|check|lookup> [events.jsonl|description] [--mappings PATH] [--min-occurrences N] [--source S] [--out PATH]
 
 Work with optional vendor-mappings.json files as factual recurring-description hints.
+If you pass events.jsonl to suggest, clawbooks compares staged vendors to existing mappings and stable ledger history for fast, conservative consistency hints.
 
 Examples:
   clawbooks import mappings suggest --source statement_import
+  clawbooks import mappings suggest staged.jsonl --min-occurrences 2
   clawbooks import mappings check staged.jsonl --mappings .books/imports/statement-csv/vendor-mappings.json
   clawbooks import mappings lookup "NETFLIX"`,
     "import-sessions": `Usage: clawbooks import sessions <list|show> [session-id|latest]
 
-Inspect saved import-session sidecars written by \`clawbooks import check --save-session\`.
+Inspect saved import-session sidecars and the derived session index rebuilt after saved checks and session-aware batch appends.
 
 Examples:
   clawbooks import sessions list
@@ -475,13 +480,16 @@ Append one event to the ledger and surface the run-level grounding state.
 Examples:
   clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
   clawbooks record '{"source":"manual","type":"expense","data":{"amount":25,"currency":"USD"}}' --classification-basis manual_operator`,
-    batch: `Usage: clawbooks batch [--classification-basis BASIS] [--allow-provisional]
+    batch: `Usage: clawbooks batch [--classification-basis BASIS] [--allow-provisional] [--dry-run] [--import-session ID]
 
 Append JSONL events from stdin and surface the run-level grounding state.
+Use --dry-run to see whether anything new would append without mutating the ledger.
+If you pass --import-session, clawbooks updates that session lifecycle and rebuilds imports/session-index.json.
 
 Examples:
   cat events.jsonl | clawbooks batch
-  cat events.jsonl | clawbooks batch --classification-basis manual_operator`,
+  cat events.jsonl | clawbooks batch --classification-basis manual_operator
+  cat events.jsonl | clawbooks batch --dry-run --import-session import-session-123`,
     documents: `Usage: clawbooks documents [period] [--as-of ISO_DATE] [--direction issued|received] [--status open|partial|settled|overpaid] [--counterparty NAME] [--group-by counterparty] [--format json|csv]
        clawbooks documents counterparties [period] [--as-of ISO_DATE] [--direction issued|received] [--status open|partial|settled|overpaid] [--match TEXT] [--format json|csv]
 
@@ -540,7 +548,7 @@ if (cmd === "workflow") {
 switch (cmd) {
   case "init":      cmdInit(args, { booksFlag }); break;
   case "record":    cmdRecord(args, LEDGER); break;
-  case "batch":     cmdBatch(args, await stdin(), LEDGER); break;
+  case "batch":     cmdBatch(args, await stdin(), { ledgerPath: LEDGER, booksDir: BOOKS_DIR, policyPath: POLICY }); break;
   case "import":    cmdImport(args, { booksDir: BOOKS_DIR, ledgerPath: LEDGER }); break;
   case "log":       cmdLog(args, LEDGER); break;
   case "context":   cmdContext(args, {

@@ -1,7 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { positional, flags } from "../cli-helpers.js";
 import { type DateBasis } from "../imports.js";
+import { listImportSessions, readImportSession, sessionIndexPathFor, sessionsDirFor, type ImportSessionRecord, writeImportSessionRecord } from "../import-sessions.js";
 import { readAll, type LedgerEvent } from "../ledger.js";
 import {
   buildImportCheck,
@@ -17,6 +18,7 @@ import {
   provenanceCoverage,
   stableHistorySummary,
   suggestMappings,
+  suggestMappingsForEvents,
   topEntry,
   validateMappingsFile,
   vendorHistory,
@@ -40,52 +42,6 @@ type ParsedCsv = {
   delimiter: string;
   headers: string[];
   rows: Array<Record<string, string>>;
-};
-
-type ImportSessionRecord = {
-  import_session: string;
-  session_schema_version: string;
-  created_at: string;
-  recorded_via: string;
-  source_doc: string | null;
-  source_hash: string | null;
-  apparent_source_entity: string | null;
-  entity_mismatch: boolean | null;
-  operator_identity: string | null;
-  notes: string | null;
-  mapper_path: string | null;
-  scaffold_kind: string | null;
-  input_path: string;
-  statement_profile_path: string | null;
-  status: string;
-  workflow_state: string;
-  reporting_mode: string;
-  classification_basis: string;
-  workflow_acknowledged: boolean;
-  workflow_state_path: string | null;
-  program_path: string | null;
-  policy_path: string | null;
-  program_hash: string | null;
-  policy_hash: string | null;
-  date_basis: string;
-  currency: string | null;
-  expected: Record<string, number | string>;
-  actual: Record<string, number | string | null>;
-  differences: Record<string, number>;
-  issue_count: number;
-  issues: string[];
-  source_coverage: Record<string, unknown>;
-  input_event_count: number;
-  filtered_event_count: number;
-  scoped_event_count: number;
-  provenance_coverage: ReturnType<typeof provenanceCoverage>;
-  date_coverage: ReturnType<typeof dateCoverage>;
-  mapping_diagnostics: Record<string, unknown>;
-  ordering: {
-    filtered: ReturnType<typeof orderingProfile>;
-    scoped: ReturnType<typeof orderingProfile>;
-  };
-  duplicate_refs: string[];
 };
 
 const VALID_KINDS: ScaffoldKind[] = ["statement-csv", "generic-csv", "fills-csv", "manual-batch", "opening-balances"];
@@ -139,29 +95,6 @@ function resolveVendorMappingsPaths(
     used: checked.find((candidate) => existsSync(candidate)) ?? null,
     checked,
   };
-}
-
-function sessionsDirFor(booksDir: string | null, ledgerPath: string): string {
-  return booksDir && existsSync(booksDir)
-    ? resolve(booksDir, "imports", "sessions")
-    : resolve(dirname(resolve(ledgerPath)), "clawbooks-import-sessions");
-}
-
-function readSessionRecord(path: string): ImportSessionRecord | null {
-  try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function listSessionFiles(booksDir: string | null, ledgerPath: string): string[] {
-  const dir = sessionsDirFor(booksDir, ledgerPath);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => name.endsWith(".json"))
-    .map((name) => resolve(dir, name))
-    .sort();
 }
 
 function readEventsFile(path: string): LedgerEvent[] {
@@ -1138,6 +1071,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     writeFileSync(outPath, stagedText, "utf-8");
 
     let checkReport: Record<string, unknown> | null = null;
+    let pendingSessionRecord: ImportSessionRecord | null = null;
     if (f.statement) {
       const dateBasis = (f["date-basis"] ?? profile.date_basis ?? "ledger") as DateBasis;
       if (!["ledger", "transaction", "posting"].includes(dateBasis)) {
@@ -1169,11 +1103,8 @@ export function cmdImport(args: string[], params: ImportParams) {
 
       if (f["save-session"] === "true") {
         const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-        const sessionsDir = sessionsDirFor(params.booksDir, params.ledgerPath);
-        mkdirSync(sessionsDir, { recursive: true });
-        const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
         const report = checkReport as unknown as ImportSessionRecord & Record<string, unknown>;
-        const sessionRecord: ImportSessionRecord = {
+        pendingSessionRecord = {
           import_session: sessionId,
           session_schema_version: "clawbooks.import-session.v1",
           created_at: new Date().toISOString(),
@@ -1214,12 +1145,15 @@ export function cmdImport(args: string[], params: ImportParams) {
           mapping_diagnostics: (report.mapping_diagnostics ?? {}) as Record<string, unknown>,
           ordering: report.ordering as { filtered: ReturnType<typeof orderingProfile>; scoped: ReturnType<typeof orderingProfile> },
           duplicate_refs: Array.isArray(report.duplicate_refs) ? report.duplicate_refs as string[] : [],
+          lifecycle: "checked",
+          appended_event_count: null,
+          ledger_changed: null,
         };
-        writeFileSync(sessionPath, JSON.stringify(sessionRecord, null, 2) + "\n", "utf-8");
       }
     }
 
     let appendResult: Record<string, unknown> | null = null;
+    let appendedEventCount = 0;
     if (f.append === "true") {
       if (checkReport && checkReport.status !== "ok") {
         console.error(`Refusing to append because import check returned status "${String(checkReport.status)}". Review ${outPath} and the reported issues first.`);
@@ -1240,15 +1174,29 @@ export function cmdImport(args: string[], params: ImportParams) {
         if (!existsSync(params.ledgerPath)) writeFileSync(params.ledgerPath, "", "utf-8");
         appendFileSync(params.ledgerPath, batch.newLines.join("\n") + "\n", "utf-8");
       }
+      appendedEventCount = batch.newLines.length;
       appendResult = {
         recorded: batch.recorded,
         skipped: batch.skipped,
         errors: batch.errors,
+        would_append: batch.newLines.length,
         warnings: batch.warnings,
         error_messages: batch.errorMessages,
         reporting_mode: reportingMode,
         classification_basis: classificationBasis,
       };
+    }
+
+    if (pendingSessionRecord) {
+      const lifecycle = f.append === "true"
+        ? (appendedEventCount > 0 ? "appended" : "skipped_duplicate")
+        : "checked";
+      writeImportSessionRecord(params.booksDir, params.ledgerPath, {
+        ...pendingSessionRecord,
+        lifecycle,
+        appended_event_count: f.append === "true" ? appendedEventCount : null,
+        ledger_changed: f.append === "true" ? appendedEventCount > 0 : null,
+      });
     }
 
     console.log(JSON.stringify({
@@ -1293,18 +1241,15 @@ export function cmdImport(args: string[], params: ImportParams) {
 
   if (p[0] === "sessions") {
     const action = p[1] ?? "list";
-    const files = listSessionFiles(params.booksDir, params.ledgerPath);
-    const sessions = files
-      .map((path) => ({ path, session: readSessionRecord(path) }))
-      .filter((entry): entry is { path: string; session: ImportSessionRecord } => entry.session !== null)
-      .sort((a, b) => a.session.created_at.localeCompare(b.session.created_at));
+    const sessions = listImportSessions(params.booksDir, params.ledgerPath);
 
     if (action === "list") {
       console.log(JSON.stringify({
         command: "import sessions list",
         sessions_dir: sessionsDirFor(params.booksDir, params.ledgerPath),
+        session_index_path: sessionIndexPathFor(params.booksDir, params.ledgerPath),
         session_count: sessions.length,
-        sessions: sessions.slice(-20).reverse().map(({ path, session }) => ({
+        sessions: sessions.slice(-20).reverse().map((session) => ({
           import_session: session.import_session,
           created_at: session.created_at,
           status: session.status,
@@ -1312,14 +1257,17 @@ export function cmdImport(args: string[], params: ImportParams) {
           source_hash: session.source_hash,
           apparent_source_entity: session.apparent_source_entity,
           entity_mismatch: session.entity_mismatch,
+          lifecycle: session.lifecycle,
+          appended_event_count: session.appended_event_count,
+          ledger_changed: session.ledger_changed,
           workflow_state: session.workflow_state,
           reporting_mode: session.reporting_mode,
           classification_basis: session.classification_basis,
           workflow_acknowledged: session.workflow_acknowledged,
-          input_path: session.input_path,
-          statement_profile_path: session.statement_profile_path,
-          operator_identity: session.operator_identity,
-          path,
+          input_path: typeof session.input_path === "string" ? session.input_path : null,
+          statement_profile_path: typeof session.statement_profile_path === "string" ? session.statement_profile_path : null,
+          operator_identity: typeof session.operator_identity === "string" ? session.operator_identity : null,
+          path: session.path,
         })),
         next_steps: sessions.length === 0
           ? ["Run `clawbooks import check ... --save-session` to create an import session record."]
@@ -1336,15 +1284,20 @@ export function cmdImport(args: string[], params: ImportParams) {
       }
       const match = target === "latest"
         ? sessions.at(-1)
-        : sessions.find(({ session, path }) => session.import_session === target || path.endsWith(`/${target}.json`));
+        : sessions.find((session) => session.import_session === target || session.path.endsWith(`/${target}.json`));
       if (!match) {
         console.error(`No import session found for "${target}".`);
+        process.exit(1);
+      }
+      const record = readImportSession(match.path);
+      if (!record) {
+        console.error(`Failed to read import session at ${match.path}.`);
         process.exit(1);
       }
       console.log(JSON.stringify({
         command: "import sessions show",
         path: match.path,
-        ...match.session,
+        ...record,
       }, null, 2));
       return;
     }
@@ -1394,7 +1347,7 @@ export function cmdImport(args: string[], params: ImportParams) {
       console.log(JSON.stringify({
         command: "import mappings",
         actions: [
-          { name: "suggest", description: "Suggest vendor mapping candidates from stable ledger history" },
+          { name: "suggest", description: "Suggest vendor mapping candidates from stable ledger history or a staged import file plus history" },
           { name: "check", description: "Validate a mappings file and optionally compare it to staged events" },
           { name: "lookup", description: "Explain how a description would match current mappings and history" },
         ],
@@ -1413,10 +1366,57 @@ export function cmdImport(args: string[], params: ImportParams) {
       const minOccurrences = Math.max(2, parseInt(f["min-occurrences"] ?? "3") || 3);
       const sourceFilter = f.source;
       const history = sourceFilter ? ledgerEvents.filter((event) => event.source === sourceFilter) : ledgerEvents;
+      const inputPath = p[2];
+      const events = inputPath ? readEventsFile(resolve(inputPath)) : null;
+      if (events) {
+        const suggestions = suggestMappingsForEvents(events, loadedMappings.mappings, history, minOccurrences);
+        const result = {
+          command: "import mappings suggest",
+          ledger_path: resolve(params.ledgerPath),
+          input_path: resolve(inputPath),
+          mappings_path: loadedMappings.path,
+          mappings_paths_checked: mappingsResolution.checked,
+          min_occurrences: minOccurrences,
+          source: sourceFilter ?? null,
+          existing_mapping_count: loadedMappings.mappings.length,
+          existing_mapping_issues: loadedMappings.issues,
+          candidate_summary: {
+            staged_vendor_count: suggestions.staged_vendor_count,
+            surfaced_vendor_count: suggestions.surfaced_vendor_count,
+            existing_mapping_matches: suggestions.existing_mapping_matches,
+            stable_history_matches: suggestions.stable_history_matches,
+            reusable_mapping_candidates: suggestions.reusable_mapping_candidates,
+          },
+          suggestions: suggestions.suggestions,
+          next_steps: [
+            "Use existing mappings and stable history matches as fast consistency hints while classifying the staged file.",
+            "Review only the reusable mapping candidates before copying any of them into vendor-mappings.json.",
+            "Keep vendor mappings as factual recurring hints, not as a replacement for policy.md.",
+            "Re-run `clawbooks import check` after updating mappings to see coverage and conflict signals.",
+          ],
+        };
+        if (f.out) {
+          const outPath = resolve(f.out);
+          writeFileSync(outPath, JSON.stringify({
+            generated_at: new Date().toISOString(),
+            source: "clawbooks import mappings suggest",
+            ledger_path: resolve(params.ledgerPath),
+            input_path: resolve(inputPath),
+            mappings: suggestions.suggestions
+              .filter((item) => item.suggest_persist_mapping)
+              .map((item) => item.suggested_mapping)
+              .filter((mapping): mapping is NonNullable<typeof mapping> => Boolean(mapping)),
+          }, null, 2) + "\n", "utf-8");
+        }
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+
       const suggestions = suggestMappings(history, loadedMappings.mappings, minOccurrences);
       const result = {
         command: "import mappings suggest",
         ledger_path: resolve(params.ledgerPath),
+        input_path: null,
         mappings_path: loadedMappings.path,
         mappings_paths_checked: mappingsResolution.checked,
         min_occurrences: minOccurrences,
@@ -1440,7 +1440,9 @@ export function cmdImport(args: string[], params: ImportParams) {
           generated_at: new Date().toISOString(),
           source: "clawbooks import mappings suggest",
           ledger_path: resolve(params.ledgerPath),
-          mappings: suggestions.suggestions.filter((item) => !item.already_covered).map((item) => item.suggested_mapping),
+          mappings: suggestions.suggestions
+            .filter((item) => !item.already_covered)
+            .map((item) => item.suggested_mapping),
         }, null, 2) + "\n", "utf-8");
       }
       console.log(JSON.stringify(result, null, 2));
@@ -1569,9 +1571,6 @@ export function cmdImport(args: string[], params: ImportParams) {
 
     if (f["save-session"] === "true") {
       const sessionId = f["session-id"] ?? `import-session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-      const sessionsDir = sessionsDirFor(params.booksDir, params.ledgerPath);
-      mkdirSync(sessionsDir, { recursive: true });
-      const sessionPath = resolve(sessionsDir, `${sessionId}.json`);
       const sessionRecord: ImportSessionRecord = {
         import_session: sessionId,
         session_schema_version: "clawbooks.import-session.v1",
@@ -1613,8 +1612,11 @@ export function cmdImport(args: string[], params: ImportParams) {
         mapping_diagnostics: report.mapping_diagnostics,
         ordering: report.ordering,
         duplicate_refs: report.duplicate_refs,
+        lifecycle: "checked",
+        appended_event_count: null,
+        ledger_changed: null,
       };
-      writeFileSync(sessionPath, JSON.stringify(sessionRecord, null, 2) + "\n", "utf-8");
+      const sessionPath = writeImportSessionRecord(params.booksDir, params.ledgerPath, sessionRecord);
       console.error(`Saved import session: ${sessionPath}`);
     }
     return;

@@ -1,12 +1,16 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { updateImportSessionRecord } from "../import-sessions.js";
 import { VALID_CLASSIFICATION_BASES, buildWorkflowStatus, deriveReportingMode, inferWorkflowPaths } from "../workflow-state.js";
 import { flags } from "../cli-helpers.js";
 import { prepareBatch } from "../operations.js";
 
-export function cmdBatch(args: string[], input: string, ledgerPath: string) {
+export function cmdBatch(args: string[], input: string, params: { ledgerPath: string; booksDir?: string | null; policyPath?: string }) {
   const f = flags(args);
-  const workflowPaths = inferWorkflowPaths(ledgerPath);
-  const workflow = buildWorkflowStatus({ booksDir: workflowPaths.booksDir, policyPath: workflowPaths.policyPath });
+  const dryRun = f["dry-run"] === "true";
+  const workflowPaths = inferWorkflowPaths(params.ledgerPath);
+  const booksDir = params.booksDir ?? workflowPaths.booksDir;
+  const policyPath = params.policyPath ?? workflowPaths.policyPath;
+  const workflow = buildWorkflowStatus({ booksDir, policyPath });
   const allowProvisional = f["allow-provisional"] === "true";
   const classificationBasis = f["classification-basis"]
     ?? (workflow.reporting_readiness === "ready" ? "policy_guided" : "manual_operator");
@@ -21,12 +25,23 @@ export function cmdBatch(args: string[], input: string, ledgerPath: string) {
     process.exit(1);
   }
 
-  if (!existsSync(ledgerPath)) writeFileSync(ledgerPath, "", "utf-8");
-  const existingLines = readFileSync(ledgerPath, "utf-8").split("\n").filter(Boolean);
+  if (!existsSync(params.ledgerPath)) writeFileSync(params.ledgerPath, "", "utf-8");
+  const existingLines = readFileSync(params.ledgerPath, "utf-8").split("\n").filter(Boolean);
   const result = prepareBatch({ input, existingLines });
 
-  if (result.newLines.length > 0) {
-    appendFileSync(ledgerPath, result.newLines.join("\n") + "\n", "utf-8");
+  if (!dryRun && result.newLines.length > 0) {
+    appendFileSync(params.ledgerPath, result.newLines.join("\n") + "\n", "utf-8");
+  }
+
+  if (typeof f["import-session"] === "string" && f["import-session"].trim()) {
+    const lifecycle = dryRun
+      ? (result.newLines.length === 0 ? "skipped_duplicate" : "checked")
+      : (result.newLines.length > 0 ? "appended" : "skipped_duplicate");
+    updateImportSessionRecord(booksDir, params.ledgerPath, f["import-session"], {
+      lifecycle,
+      appended_event_count: dryRun ? 0 : result.newLines.length,
+      ledger_changed: !dryRun && result.newLines.length > 0,
+    });
   }
 
   if (result.warnings.length > 0) {
@@ -41,6 +56,8 @@ export function cmdBatch(args: string[], input: string, ledgerPath: string) {
     recorded: result.recorded,
     skipped: result.skipped,
     errors: result.errors,
+    dry_run: dryRun,
+    would_append: result.newLines.length,
     workflow,
     reporting_mode: reportingMode,
     classification_basis: classificationBasis,

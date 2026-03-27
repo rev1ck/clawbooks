@@ -2062,6 +2062,87 @@ export function suggestMappings(events: LedgerEvent[], existingMappings: VendorM
   };
 }
 
+export function suggestMappingsForEvents(
+  events: LedgerEvent[],
+  existingMappings: VendorMapping[],
+  ledgerHistoryEvents: LedgerEvent[],
+  minOccurrences: number,
+) {
+  const stagedGroups = vendorHistory(events);
+  const historicalGroups = vendorHistory(ledgerHistoryEvents);
+
+  const suggestions = Object.values(stagedGroups)
+    .map((group) => {
+      const example = topEntry(group.descriptions)?.value ?? null;
+      if (!example) return null;
+
+      const existing = matchingMapping(example, existingMappings);
+      const stagedStable = stableHistorySummary(group);
+      const historical = historicalGroups[group.key];
+      const stableHistorical = historical ? stableHistorySummary(historical) : null;
+      const repeatedInStaged = group.count >= minOccurrences;
+      const shouldSurface = existing !== null || stableHistorical !== null || (repeatedInStaged && stagedStable !== null);
+      if (!shouldSurface) return null;
+
+      const suggestedMapping = existing
+        ? null
+        : stableHistorical
+          ? {
+            match: example,
+            type: stableHistorical.type,
+            category: stableHistorical.category,
+            ...(stableHistorical.confidence ? { confidence: stableHistorical.confidence } : {}),
+            notes: `Derived from ${stableHistorical.count} historical ledger event(s) with stable classification.`,
+          }
+          : stagedStable
+            ? {
+              match: example,
+              type: stagedStable.type,
+              category: stagedStable.category,
+              ...(stagedStable.confidence ? { confidence: stagedStable.confidence } : {}),
+              notes: `Derived from ${group.count} staged event(s) with stable classification.`,
+            }
+            : null;
+
+      return {
+        normalized_vendor: group.key,
+        staged_count: group.count,
+        example_description: example,
+        existing_mapping: existing ? {
+          match: existing.match,
+          type: existing.type ?? null,
+          category: existing.category ?? null,
+          confidence: existing.confidence ?? null,
+        } : null,
+        stable_history: stableHistorical ? {
+          ...stableHistorical,
+          historical_count: stableHistorical.count,
+        } : null,
+        stable_in_staged_file: stagedStable ? {
+          ...stagedStable,
+          staged_count: group.count,
+        } : null,
+        suggest_persist_mapping: !existing && suggestedMapping !== null,
+        suggested_mapping: suggestedMapping,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .sort((left, right) => {
+      const leftPriority = (left.existing_mapping ? 3 : 0) + (left.stable_history ? 2 : 0) + (left.suggest_persist_mapping ? 1 : 0);
+      const rightPriority = (right.existing_mapping ? 3 : 0) + (right.stable_history ? 2 : 0) + (right.suggest_persist_mapping ? 1 : 0);
+      return rightPriority - leftPriority || right.staged_count - left.staged_count || left.normalized_vendor.localeCompare(right.normalized_vendor);
+    });
+
+  return {
+    staged_vendor_count: Object.keys(stagedGroups).length,
+    surfaced_vendor_count: suggestions.length,
+    existing_mapping_matches: suggestions.filter((item) => item.existing_mapping !== null).length,
+    stable_history_matches: suggestions.filter((item) => item.stable_history !== null).length,
+    reusable_mapping_candidates: suggestions.filter((item) => item.suggest_persist_mapping).length,
+    suggestions,
+  };
+}
+
 export function validateMappingsFile(mappings: VendorMapping[]) {
   const duplicateMatches = Object.entries(countMapEntries(mappings.map((mapping) => normalizeVendorText(mapping.match))))
     .filter(([, count]) => count > 1)
