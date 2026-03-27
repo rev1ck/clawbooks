@@ -337,7 +337,7 @@ Examples:
   clawbooks import run statement.csv --skip-rows 1 --source-doc "statement.csv"
   clawbooks import run statement.csv --statement statement-profile.json
   clawbooks import run statement.csv --statement statement-profile.json --append`,
-    "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID] [--classification-basis BASIS]
+    "import-check": `Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--save-session] [--session-id ID] [--classification-basis BASIS] [--source-doc NAME] [--source-hash HASH] [--apparent-source-entity NAME] [--entity-mismatch true|false]
 
 Validate staged JSONL before append. --statement loads explicit expectations such as:
   - period coverage
@@ -346,7 +346,7 @@ Validate staged JSONL before append. --statement loads explicit expectations suc
   - date basis
 
 If a vendor mappings file is present, import check surfaces coverage and consistency signals.
-Saved import sessions capture grounding state such as classification_basis, program_hash, policy_hash, and workflow acknowledgment.
+Saved import sessions capture grounding state such as classification_basis, program_hash, policy_hash, workflow acknowledgment, and source metadata.
 Import full source coverage when practical, then cut periods later in summary/verify/review.
 
 Examples:

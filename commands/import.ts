@@ -47,6 +47,10 @@ type ImportSessionRecord = {
   session_schema_version: string;
   created_at: string;
   recorded_via: string;
+  source_doc: string | null;
+  source_hash: string | null;
+  apparent_source_entity: string | null;
+  entity_mismatch: boolean | null;
   operator_identity: string | null;
   notes: string | null;
   mapper_path: string | null;
@@ -185,6 +189,15 @@ function readStatementProfile(path: string): StatementProfile {
     console.error(`Failed to parse statement profile JSON from ${path}`);
     process.exit(1);
   }
+}
+
+function firstImportSourceMetadata(events: LedgerEvent[]) {
+  const firstWithDoc = events.find((event) => typeof event.data?.source_doc === "string" && event.data.source_doc.trim().length > 0);
+  const firstWithHash = events.find((event) => typeof event.data?.source_hash === "string" && event.data.source_hash.trim().length > 0);
+  return {
+    sourceDoc: firstWithDoc && typeof firstWithDoc.data.source_doc === "string" ? firstWithDoc.data.source_doc : null,
+    sourceHash: firstWithHash && typeof firstWithHash.data.source_hash === "string" ? firstWithHash.data.source_hash : null,
+  };
 }
 
 function statementProfileTemplate(): string {
@@ -1018,7 +1031,7 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (p[0] === "run") {
     const inputPath = p[1];
     if (!inputPath) {
-      console.error("Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [--mappings PATH] [--source NAME] [--currency CUR] [--order auto|newest-first|oldest-first] [--skip-rows N] [--source-doc NAME] [--source-hash HASH] [--recorded-via VALUE] [--transaction-date-col COL] [--posting-date-col COL] [--description-col COL] [--amount-col COL] [--debit-col COL] [--credit-col COL] [--balance-col COL] [--ref-col COL] [--category-col COL] [--type-col COL] [--confidence-col COL] [--classification-basis BASIS] [--save-session]");
+      console.error("Usage: clawbooks import run <statement.csv> [--statement profile.json] [--out PATH] [--append] [--mappings PATH] [--source NAME] [--currency CUR] [--order auto|newest-first|oldest-first] [--skip-rows N] [--source-doc NAME] [--source-hash HASH] [--recorded-via VALUE] [--apparent-source-entity NAME] [--entity-mismatch true|false] [--transaction-date-col COL] [--posting-date-col COL] [--description-col COL] [--amount-col COL] [--debit-col COL] [--credit-col COL] [--balance-col COL] [--ref-col COL] [--category-col COL] [--type-col COL] [--confidence-col COL] [--classification-basis BASIS] [--save-session]");
       process.exit(1);
     }
 
@@ -1119,6 +1132,8 @@ export function cmdImport(args: string[], params: ImportParams) {
     }
 
     const outPath = resolve(f.out ?? defaultStagedOutPath(inputPath));
+    const sourceDoc = f["source-doc"] ?? resolve(inputPath);
+    const sourceHash = f["source-hash"] ?? null;
     const stagedText = stagedEvents.map((event) => JSON.stringify(event)).join("\n") + (stagedEvents.length ? "\n" : "");
     writeFileSync(outPath, stagedText, "utf-8");
 
@@ -1163,6 +1178,10 @@ export function cmdImport(args: string[], params: ImportParams) {
           session_schema_version: "clawbooks.import-session.v1",
           created_at: new Date().toISOString(),
           recorded_via: "clawbooks import run",
+          source_doc: sourceDoc,
+          source_hash: sourceHash,
+          apparent_source_entity: f["apparent-source-entity"] ?? null,
+          entity_mismatch: f["entity-mismatch"] === undefined ? null : f["entity-mismatch"] === "true",
           operator_identity: f["recorded-by"] ?? null,
           notes: f.notes ?? null,
           mapper_path: null,
@@ -1289,6 +1308,10 @@ export function cmdImport(args: string[], params: ImportParams) {
           import_session: session.import_session,
           created_at: session.created_at,
           status: session.status,
+          source_doc: session.source_doc,
+          source_hash: session.source_hash,
+          apparent_source_entity: session.apparent_source_entity,
+          entity_mismatch: session.entity_mismatch,
           workflow_state: session.workflow_state,
           reporting_mode: session.reporting_mode,
           classification_basis: session.classification_basis,
@@ -1496,7 +1519,7 @@ export function cmdImport(args: string[], params: ImportParams) {
   if (p[0] === "check") {
     const inputPath = p[1];
     if (!inputPath) {
-      console.error("Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C] [--save-session] [--session-id ID]");
+      console.error("Usage: clawbooks import check <events.jsonl> [--statement profile.json] [--mappings PATH] [--count N] [--debits N] [--credits N] [--opening-balance N] [--closing-balance N] [--date-basis ledger|transaction|posting] [--statement-start YYYY-MM-DD] [--statement-end YYYY-MM-DD] [--currency C] [--source-doc NAME] [--source-hash HASH] [--apparent-source-entity NAME] [--entity-mismatch true|false] [--save-session] [--session-id ID]");
       process.exit(1);
     }
 
@@ -1508,6 +1531,7 @@ export function cmdImport(args: string[], params: ImportParams) {
     }
 
     const rawEvents = readEventsFile(resolve(inputPath));
+    const sourceMetadata = firstImportSourceMetadata(rawEvents);
     const mappingsResolution = resolveVendorMappingsPaths(f.mappings, f.statement, inputPath, params.booksDir);
     const loadedMappings = readVendorMappings(mappingsResolution.used);
     const ledgerHistoryEvents = existsSync(params.ledgerPath) ? readAll(params.ledgerPath) : [];
@@ -1553,6 +1577,10 @@ export function cmdImport(args: string[], params: ImportParams) {
         session_schema_version: "clawbooks.import-session.v1",
         created_at: new Date().toISOString(),
         recorded_via: "clawbooks import check",
+        source_doc: f["source-doc"] ?? sourceMetadata.sourceDoc,
+        source_hash: f["source-hash"] ?? sourceMetadata.sourceHash,
+        apparent_source_entity: f["apparent-source-entity"] ?? null,
+        entity_mismatch: f["entity-mismatch"] === undefined ? null : f["entity-mismatch"] === "true",
         operator_identity: f["recorded-by"] ?? null,
         notes: f.notes ?? null,
         mapper_path: f.mapper ? resolve(f.mapper) : null,
