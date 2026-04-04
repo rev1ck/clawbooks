@@ -1,13 +1,19 @@
 # Clawbooks
 
-The ledger stores facts. The policy states the rules. The agent does the accounting.
+The ledger stores facts and durable accounting treatments. The policy states the rules. The agent does the accounting.
 
 - `program.md` — how to operate clawbooks (this file)
 - `policy.md` — how the current entity should be accounted for
-- `event-schema.md` — how facts are encoded in the ledger
+- `event-schema.md` — how facts and treatments are encoded in the ledger
 - `--help` — CLI command and flag reference
 
 The CLI is data storage. You are the accountant.
+
+Treat this as a three-layer system:
+
+- `policy.md` stores entity-level accounting rules
+- fact events store what happened
+- `treatment` events store durable case-level accounting judgment
 
 ## Grounding sequence
 
@@ -65,6 +71,19 @@ Use `policy.md` to resolve entity-specific questions: which accounts are control
 
 The goal is a complete and accurate ledger, not a ledger that contains everything the user handed you.
 
+## Durable treatments
+
+If the accounting judgment is durable, material, and likely to matter again, persist it as a `treatment` event in `ledger.jsonl`.
+
+Use treatments for positions like:
+
+- capitalization of a specific purchase
+- accrual timing for a specific bill or contract
+- owner-boundary decisions tied to a specific event or counterparty
+- durable classification overrides
+
+Do not put these case-by-case decisions into `policy.md` when there are many of them. `policy.md` should hold the rule; `treatment` should hold the applied accounting thesis for the specific case.
+
 ## Importing source data
 
 When the user gives you a CSV, statement, or other raw financial data:
@@ -75,7 +94,7 @@ When the user gives you a CSV, statement, or other raw financial data:
 4. Capture the source's opening balance, closing balance, expected row count, total debits, and total credits before writing events
 5. Parse each row into a ledger event, classifying per the policy
 6. Separate operating activity from taxes, owner distributions, internal transfers, and capital items
-7. For hardware/equipment meeting the capitalization threshold, set `data.capitalize: true` and optionally `data.useful_life_months`
+7. When the source supports a durable accounting judgment, append a `treatment` event tied to the imported fact or document
 8. Tag each event with a confidence level: `clear`, `inferred`, or `unclear`
 9. Include a stable `data.ref` derived from the source row for idempotent re-import
 10. Output as JSONL, run `clawbooks import check` with statement expectations, then pipe to `clawbooks batch`
@@ -184,7 +203,7 @@ When you see repeated corrections (e.g., "GITHUB" always reclassified to `softwa
 
 ## Capitalization and asset lifecycle
 
-When an expense meets the capitalization threshold declared in `policy.md`, set `data.capitalize: true`. The `assets` command finds all such events and computes depreciation.
+When a purchase meets the capitalization threshold declared in `policy.md`, record a `capitalize_asset` treatment tied to the purchase event. The `assets` command reads those treatments and computes depreciation from them.
 
 **Disposal** (sold/traded): Record a `disposal` event with `data.asset_id` and `data.proceeds`. Gain/loss = proceeds - net book value at disposal date.
 
@@ -196,13 +215,16 @@ When an expense meets the capitalization threshold declared in `policy.md`, set 
 
 `event-schema.md` is the authority for event encoding, field names, sign conventions, and the `data.*` extension surface. Read it before extending event shapes.
 
-`policy.md` is the authority for interpretation, recognition, categorization, and reporting.
+`policy.md` is the authority for entity-level interpretation, recognition, categorization, and reporting.
+
+`treatment` events are the authority for durable case-level accounting judgment already made against specific facts or documents.
 
 Brief pointers for common patterns:
 - **FX / valuation**: `data.base_amount`, `data.fx_rate`, `data.base_currency` — store at ingestion time to avoid re-fetching historical prices
 - **Lot tracking**: `data.lot_id` (acquisition), `data.lot_ref` (single disposition), `data.disposition_lots` (multi-lot disposition)
 - **Provenance**: `data.ref`, `data.source_doc`, `data.source_row`, `data.source_hash`
 - **Review**: `reclassify`, `correction`, `confirm` — append-only audit events
+- **Durable judgment**: `treatment`, `treatment_supersede` — append-only accounting positions reused by later reports
 
 ## Uncertainty and provisional work
 

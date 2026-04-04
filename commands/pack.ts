@@ -44,6 +44,7 @@ export function cmdPack(args: string[], params: PackParams) {
   writeFileSync(`${outDir}/summary.json`, JSON.stringify(pack.summary, null, 2) + "\n", "utf-8");
   writeFileSync(`${outDir}/verify.json`, JSON.stringify(pack.verify, null, 2) + "\n", "utf-8");
   writeFileSync(`${outDir}/workflow.json`, JSON.stringify(pack.workflow, null, 2) + "\n", "utf-8");
+  if (pack.treatments_csv) writeFileSync(`${outDir}/treatments.csv`, pack.treatments_csv, "utf-8");
   if (pack.reclassifications_csv) writeFileSync(`${outDir}/reclassifications.csv`, pack.reclassifications_csv, "utf-8");
   if (pack.asset_register_csv) writeFileSync(`${outDir}/asset_register.csv`, pack.asset_register_csv, "utf-8");
   if (pack.policy_markdown !== null) writeFileSync(`${outDir}/policy.md`, pack.policy_markdown, "utf-8");

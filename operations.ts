@@ -6,8 +6,9 @@ import { ASSET_EVENT_TYPES, DOCUMENT_TYPES, INFLOW_TYPES, META_TYPES, OUTFLOW_TY
 import { filterByDateBasis, type DateBasis } from "./imports.js";
 import { computeId, filter, hashLine, latestSnapshot, type LedgerEvent } from "./ledger.js";
 import { classifyPolicyReadiness, financialYearEndFromPolicy, lintPolicyText } from "./policy.js";
-import { applyReclassifications, buildCorrectionSummary, buildConfirmedSet, buildReclassifyMap, buildReviewMateriality } from "./review.js";
+import { applyReclassifications, buildCorrectionSummary, buildConfirmedSet, buildReviewMateriality } from "./review.js";
 import { buildBaseCurrencySummary, buildCategoryRollup, buildFxCoverage, buildReportingSections, convertedAmountWarnings, round2, sortByTimestamp } from "./reporting.js";
+import { applyEventLevelTreatments, compileTreatmentEntries, loadActiveTreatments, summarizeTreatments, validateSpecialEventPayload } from "./treatments.js";
 import { VALID_CLASSIFICATION_BASES, deriveReportingMode } from "./workflow-state.js";
 import type { ImportSessionSummary } from "./import-sessions.js";
 import type { buildWorkflowStatus } from "./workflow-state.js";
@@ -39,7 +40,9 @@ export function buildAssetReport(opts: {
 }) {
   const asOf = opts.asOf ?? new Date().toISOString();
   const defaultLife = opts.defaultLife ?? 36;
-  const register = buildAssetRegister(opts.all, {
+  const activeTreatments = loadActiveTreatments(opts.all, { before: asOf });
+  const effectiveEvents = applyEventLevelTreatments(opts.all, activeTreatments);
+  const register = buildAssetRegister(effectiveEvents, {
     category: opts.category,
     defaultLife,
     asOf,
@@ -64,6 +67,38 @@ export function buildAssetReport(opts: {
       count: register.written_off.length,
       assets: register.written_off,
     },
+    treatments: summarizeTreatments(activeTreatments),
+  };
+}
+
+function buildTreatmentView(params: {
+  all: LedgerEvent[];
+  events: LedgerEvent[];
+  after?: string;
+  before?: string;
+}) {
+  const activeTreatments = loadActiveTreatments(params.all, {
+    after: params.after,
+    before: params.before,
+  });
+  const allTreatmentAdjustedEvents = applyEventLevelTreatments(params.all, activeTreatments);
+  const allEffectiveEvents = applyReclassifications(allTreatmentAdjustedEvents, params.all);
+  const treatmentAdjustedEvents = applyEventLevelTreatments(params.events, activeTreatments);
+  const effectiveEvents = applyReclassifications(treatmentAdjustedEvents, params.all);
+  const compiledEntries = compileTreatmentEntries({
+    treatments: activeTreatments,
+    effectiveEvents,
+    allEffectiveEvents,
+    after: params.after,
+    before: params.before,
+  });
+
+  return {
+    activeTreatments,
+    treatmentSummary: summarizeTreatments(activeTreatments),
+    effectiveEvents,
+    compiledEntries,
+    reportingEvents: sortByTimestamp([...effectiveEvents, ...compiledEntries]),
   };
 }
 
@@ -157,15 +192,20 @@ export function buildSnapshotData(opts: {
   before?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before }));
-  const effectiveEvents = applyReclassifications(events, opts.all);
+  const treatmentView = buildTreatmentView({
+    all: opts.all,
+    events,
+    after: opts.after,
+    before: opts.before,
+  });
   const balances: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
   let eventCount = 0;
-  const reporting = buildReportingSections(effectiveEvents);
-  const categoryRollup = buildCategoryRollup(effectiveEvents);
+  const reporting = buildReportingSections(treatmentView.reportingEvents);
+  const categoryRollup = buildCategoryRollup(treatmentView.reportingEvents);
 
   for (const [index, event] of events.entries()) {
-    const effectiveEvent = effectiveEvents[index];
+    const effectiveEvent = treatmentView.effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
 
     const amount = Number(effectiveEvent.data.amount);
@@ -461,11 +501,15 @@ export function buildSummary(opts: {
   baseCurrency?: string;
 }) {
   const events = sortByTimestamp(filter(opts.all, { after: opts.after, before: opts.before, source: opts.source }));
-  const effectiveEvents = applyReclassifications(events, opts.all);
+  const treatmentView = buildTreatmentView({
+    all: opts.all,
+    events,
+    after: opts.after,
+    before: opts.before,
+  });
   const nonMetaEvents = events.filter((event) => !META_TYPES.has(event.type));
   const firstEventTs = nonMetaEvents[0]?.ts ?? null;
   const lastEventTs = nonMetaEvents[nonMetaEvents.length - 1]?.ts ?? null;
-  const reclassifyMap = buildReclassifyMap(opts.all);
   const byType: Record<string, { count: number; total: number }> = {};
   const byCategory: Record<string, { type: string; count: number; total: number }> = {};
   const byMonth: Record<string, Record<string, number>> = {};
@@ -473,23 +517,23 @@ export function buildSummary(opts: {
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0;
   let outflows = 0;
-  const reporting = buildReportingSections(effectiveEvents);
-  const categoryRollup = buildCategoryRollup(effectiveEvents);
+  const reporting = buildReportingSections(treatmentView.reportingEvents);
+  const categoryRollup = buildCategoryRollup(treatmentView.reportingEvents);
   const settlements = buildDocumentSettlementData(events);
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
-  const fxCoverage = opts.baseCurrency ? buildFxCoverage(effectiveEvents, opts.baseCurrency) : null;
-  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(effectiveEvents, opts.baseCurrency) : null;
+  const fxCoverage = opts.baseCurrency ? buildFxCoverage(treatmentView.effectiveEvents, opts.baseCurrency) : null;
+  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(treatmentView.effectiveEvents, opts.baseCurrency) : null;
   const fxWarnings = fxCoverage ? convertedAmountWarnings(fxCoverage) : [];
 
   for (const [index, event] of events.entries()) {
-    const effectiveEvent = effectiveEvents[index];
+    const effectiveEvent = treatmentView.effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
 
     const amount = Number(effectiveEvent.data.amount);
     if (Number.isNaN(amount)) continue;
 
-    const category = reclassifyMap[event.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
+    const category = String(effectiveEvent.data.category ?? effectiveEvent.type);
     const month = event.ts.slice(0, 7);
     const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
 
@@ -548,6 +592,10 @@ export function buildSummary(opts: {
       inflows: round2(inflows),
       outflows: round2(outflows),
       net: round2(inflows + outflows),
+    },
+    treatments: {
+      ...treatmentView.treatmentSummary,
+      compiled_reporting_entries: treatmentView.compiledEntries.length,
     },
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
@@ -1065,6 +1113,7 @@ export function prepareRecord(opts: {
 
   const data = { ...opts.parsed.data };
   const warning = enforceSign(opts.parsed.type, data);
+  validateSpecialEventPayload(opts.parsed.type, data);
   const ts = opts.parsed.ts ?? opts.defaultTs ?? new Date().toISOString();
   const event: LedgerEvent = {
     ts,
@@ -1113,6 +1162,7 @@ export function prepareBatch(opts: {
       const data = { ...dataCandidate };
       const warning = enforceSign(type, data);
       if (warning) warnings.push(warning);
+      validateSpecialEventPayload(type, data);
 
       const ts = parsed.ts ?? now();
       const event: LedgerEvent = {
@@ -1165,7 +1215,19 @@ export function buildContext(opts: {
   const snapshot = latestSnapshot(opts.all, opts.after);
   const effectiveAfter = snapshot?.ts ?? opts.after;
   const events = sortByTimestamp(filter(opts.all, { after: effectiveAfter, before: opts.before }).filter((event) => event.type !== "snapshot"));
-  const summary = buildContextSummary(events, opts.all, opts.baseCurrency);
+  const treatmentView = buildTreatmentView({
+    all: opts.all,
+    events,
+    after: effectiveAfter,
+    before: opts.before,
+  });
+  const summary = buildContextSummary({
+    events: treatmentView.effectiveEvents,
+    reportingEvents: treatmentView.reportingEvents,
+    all: opts.all,
+    baseCurrency: opts.baseCurrency,
+    treatmentSummary: treatmentView.treatmentSummary,
+  });
   const summaryOut = opts.verbose ? summary : buildCompactContextSummary(summary);
   const fxWarnings = opts.baseCurrency && summary.fx_coverage ? convertedAmountWarnings(summary.fx_coverage) : [];
   const metadata = {
@@ -1226,6 +1288,7 @@ export function buildContext(opts: {
       : []),
     ...(opts.verbose ? [] : ["This is the compact context view. Use --verbose to print the full raw event payloads."]),
     "Reclassify, correction, and confirm events are append-only audit events; use them when interpreting categories, field fixes, and review status.",
+    "Treatment events persist durable accounting judgment. Report sections may include deterministic treatment-derived entries such as accrual recognition.",
     "Amounts are signed: inflows are positive, outflows are negative for known flow types. Document types (invoice, bill) are signed by direction.",
   ];
 
@@ -1235,7 +1298,7 @@ export function buildContext(opts: {
     policy_text: opts.includePolicy ? opts.policyText : null,
     summary: summaryOut,
     snapshot: snapshot ? { ts: snapshot.ts, data: snapshot.data } : null,
-    events: events.map((event) => {
+    events: treatmentView.effectiveEvents.map((event) => {
       if (opts.verbose) return event;
       return {
         ts: event.ts,
@@ -1308,29 +1371,52 @@ export function buildPackData(opts: {
       ].join(",")),
     ].join("\n") + "\n";
 
-  const effectiveEvents = applyReclassifications(events, opts.all);
-  const reclassifyMap = buildReclassifyMap(opts.all);
+  const treatmentEvents = opts.all.filter((event) => event.type === "treatment");
+  const treatmentsCsv = treatmentEvents.length === 0
+    ? null
+    : [
+      "date,treatment_id,treatment_kind,status,effective_from,effective_to,compile_strategy,applies_to,justification_summary,id",
+      ...treatmentEvents.map((event) => [
+        event.ts.slice(0, 10),
+        csvEscape(String(event.data.treatment_id ?? "")),
+        csvEscape(String(event.data.treatment_kind ?? "")),
+        csvEscape(String(event.data.status ?? "")),
+        csvEscape(String(event.data.effective_from ?? "")),
+        csvEscape(String(event.data.effective_to ?? "")),
+        csvEscape(String(event.data.compile_strategy ?? "")),
+        csvEscape(JSON.stringify(event.data.applies_to ?? {})),
+        csvEscape(String(event.data.justification_summary ?? "")),
+        event.id,
+      ].join(",")),
+    ].join("\n") + "\n";
+
+  const treatmentView = buildTreatmentView({
+    all: opts.all,
+    events,
+    after: opts.after,
+    before: opts.before,
+  });
   const byType: Record<string, { count: number; total: number }> = {};
   const byCategory: Record<string, { count: number; total: number }> = {};
   const byCurrency: Record<string, { count: number; total: number }> = {};
   let inflows = 0;
   let outflows = 0;
-  const reporting = buildReportingSections(effectiveEvents);
-  const categoryRollup = buildCategoryRollup(effectiveEvents);
+  const reporting = buildReportingSections(treatmentView.reportingEvents);
+  const categoryRollup = buildCategoryRollup(treatmentView.reportingEvents);
   const settlements = buildDocumentSettlementData(events, opts.before ?? opts.generatedAt ?? new Date().toISOString());
   const reviewMateriality = buildReviewMateriality(events, opts.all);
   const correctionSummary = buildCorrectionSummary(events);
-  const fxCoverage = opts.baseCurrency ? buildFxCoverage(effectiveEvents, opts.baseCurrency) : null;
-  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(effectiveEvents, opts.baseCurrency) : null;
+  const fxCoverage = opts.baseCurrency ? buildFxCoverage(treatmentView.effectiveEvents, opts.baseCurrency) : null;
+  const baseCurrencyReporting = opts.baseCurrency ? buildBaseCurrencySummary(treatmentView.effectiveEvents, opts.baseCurrency) : null;
   const fxWarnings = fxCoverage ? convertedAmountWarnings(fxCoverage) : [];
 
   for (const [index, event] of events.entries()) {
-    const effectiveEvent = effectiveEvents[index];
+    const effectiveEvent = treatmentView.effectiveEvents[index];
     if (META_TYPES.has(event.type)) continue;
     const amount = Number(effectiveEvent.data.amount);
     if (Number.isNaN(amount)) continue;
 
-    const category = reclassifyMap[event.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
+    const category = String(effectiveEvent.data.category ?? effectiveEvent.type);
     const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
 
     if (!byType[effectiveEvent.type]) byType[effectiveEvent.type] = { count: 0, total: 0 };
@@ -1360,6 +1446,10 @@ export function buildPackData(opts: {
     by_currency: byCurrency,
     category_rollup: categoryRollup,
     cash_flow: { inflows, outflows, net: round2(inflows + outflows) },
+    treatments: {
+      ...treatmentView.treatmentSummary,
+      compiled_reporting_entries: treatmentView.compiledEntries.length,
+    },
     movement_summary: reporting.movement_summary,
     report_sections: reporting.sections,
     report_totals: reporting.totals,
@@ -1373,7 +1463,7 @@ export function buildPackData(opts: {
     ...(fxCoverage ? { fx_coverage: fxCoverage, fx_warnings: fxWarnings } : {}),
   };
 
-  const assetRegister = buildAssetRegister(events, {
+  const assetRegister = buildAssetRegister(treatmentView.effectiveEvents, {
     asOf: opts.before ?? opts.generatedAt ?? new Date().toISOString(),
     defaultLife: 36,
   });
@@ -1497,6 +1587,7 @@ export function buildPackData(opts: {
     ].join("\n") + "\n";
 
   const fileNames = ["general_ledger.csv", "summary.json", "verify.json"];
+  if (treatmentsCsv) fileNames.push("treatments.csv");
   if (reclassificationsCsv) fileNames.push("reclassifications.csv");
   if (correctionsCsv) fileNames.push("corrections.csv");
   if (confirmationsCsv) fileNames.push("confirmations.csv");
@@ -1509,6 +1600,7 @@ export function buildPackData(opts: {
     events: events.length,
     file_names: fileNames,
     general_ledger_csv: generalLedgerCsv,
+    treatments_csv: treatmentsCsv,
     reclassifications_csv: reclassificationsCsv,
     summary,
     asset_register_csv: assetRegisterCsv,

@@ -64,7 +64,7 @@ export function buildAssetRegister(
   const writtenOff: WrittenOffAssetRecord[] = [];
 
   for (const e of events) {
-    if (e.data.capitalize !== true) continue;
+    if (e.data.capitalized_via_treatment !== true) continue;
     const cat = String(e.data.category ?? "");
     if (categoryFilter && cat !== categoryFilter) continue;
 

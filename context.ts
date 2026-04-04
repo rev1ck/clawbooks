@@ -1,12 +1,19 @@
 import type { LedgerEvent } from "./ledger.js";
 import { META_TYPES } from "./event-types.js";
 import { buildDocumentSettlementData } from "./documents.js";
-import { applyReclassifications, buildCorrectionSummary, buildReclassifyMap, buildReviewMateriality, reviewCounts } from "./review.js";
+import { buildCorrectionSummary, buildReviewMateriality, reviewCounts } from "./review.js";
 import { buildBaseCurrencySummary, buildCategoryRollup, buildFxCoverage, buildReportingSections, round2, topCategoryEntries } from "./reporting.js";
 
-export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], baseCurrency?: string) {
-  const effectiveEvents = applyReclassifications(events, all);
-  const reclassifyMap = buildReclassifyMap(all);
+export function buildContextSummary(params: {
+  events: LedgerEvent[];
+  reportingEvents: LedgerEvent[];
+  all: LedgerEvent[];
+  baseCurrency?: string;
+  treatmentSummary: {
+    active_count: number;
+    by_kind: Record<string, number>;
+  };
+}) {
   const byType: Record<string, { count: number; total: number }> = {};
   const bySource: Record<string, { count: number; total: number }> = {};
   const byCurrency: Record<string, { count: number; total: number }> = {};
@@ -18,24 +25,23 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], b
   let outflows = 0;
   let nonMetaEvents = 0;
   let rawReclassifications = 0;
-  const reporting = buildReportingSections(effectiveEvents);
-  const categoryRollup = buildCategoryRollup(effectiveEvents);
+  const reporting = buildReportingSections(params.reportingEvents);
+  const categoryRollup = buildCategoryRollup(params.reportingEvents);
 
-  for (const [index, e] of events.entries()) {
-    const effectiveEvent = effectiveEvents[index];
-    eventTypes.add(e.type === "reclassify" ? e.type : effectiveEvent.type);
+  for (const e of params.events) {
+    eventTypes.add(e.type);
     sources.add(e.source);
     if (e.type === "reclassify") rawReclassifications++;
     if (META_TYPES.has(e.type)) continue;
 
     nonMetaEvents++;
-    const amount = Number(effectiveEvent.data.amount);
-    const currency = String(effectiveEvent.data.currency ?? "UNKNOWN");
-    const category = reclassifyMap[e.id] ?? String(effectiveEvent.data.category ?? effectiveEvent.type);
+    const amount = Number(e.data.amount);
+    const currency = String(e.data.currency ?? "UNKNOWN");
+    const category = String(e.data.category ?? e.type);
     currencies.add(currency);
 
-    if (!byType[effectiveEvent.type]) byType[effectiveEvent.type] = { count: 0, total: 0 };
-    byType[effectiveEvent.type].count++;
+    if (!byType[e.type]) byType[e.type] = { count: 0, total: 0 };
+    byType[e.type].count++;
 
     if (!bySource[e.source]) bySource[e.source] = { count: 0, total: 0 };
     bySource[e.source].count++;
@@ -48,7 +54,7 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], b
 
     if (isNaN(amount)) continue;
 
-    byType[effectiveEvent.type].total = round2(byType[effectiveEvent.type].total + amount);
+    byType[e.type].total = round2(byType[e.type].total + amount);
     bySource[e.source].total = round2(bySource[e.source].total + amount);
     byCurrency[currency].total = round2(byCurrency[currency].total + amount);
     byCategory[category].total = round2(byCategory[category].total + amount);
@@ -57,17 +63,16 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], b
     else outflows = round2(outflows + amount);
   }
 
-  const confidence = reviewCounts(events, all);
+  const confidence = reviewCounts(params.events, params.all);
   const needsReview = confidence.unclear + confidence.inferred + confidence.unset;
-  const reclassifiedEventCount = events.filter((e) => reclassifyMap[e.id] !== undefined).length;
-  const settlements = buildDocumentSettlementData(events);
-  const reviewMateriality = buildReviewMateriality(events, all);
-  const corrections = buildCorrectionSummary(events);
-  const fxCoverage = baseCurrency ? buildFxCoverage(effectiveEvents, baseCurrency) : null;
-  const baseCurrencyReporting = baseCurrency ? buildBaseCurrencySummary(effectiveEvents, baseCurrency) : null;
+  const settlements = buildDocumentSettlementData(params.events);
+  const reviewMateriality = buildReviewMateriality(params.events, params.all);
+  const corrections = buildCorrectionSummary(params.events);
+  const fxCoverage = params.baseCurrency ? buildFxCoverage(params.events, params.baseCurrency) : null;
+  const baseCurrencyReporting = params.baseCurrency ? buildBaseCurrencySummary(params.events, params.baseCurrency) : null;
 
   return {
-    event_count: events.length,
+    event_count: params.events.length,
     non_meta_event_count: nonMetaEvents,
     event_types: [...eventTypes].sort(),
     sources: [...sources].sort(),
@@ -84,7 +89,11 @@ export function buildContextSummary(events: LedgerEvent[], all: LedgerEvent[], b
     },
     reclassifications: {
       raw_events_in_window: rawReclassifications,
-      applied_to_events_in_window: reclassifiedEventCount,
+      applied_to_events_in_window: 0,
+    },
+    treatments: {
+      ...params.treatmentSummary,
+      compiled_reporting_entries: Math.max(0, params.reportingEvents.length - params.events.length),
     },
     correction_summary: corrections,
     review: {

@@ -72,13 +72,13 @@ export function cmdInit(args: string[], params: InitParams) {
   console.log("1. Read .books/program.md");
   console.log("2. Read .books/policy.md");
   console.log("3. Inspect the source documents");
-  console.log("4. Import normalized events");
+  console.log("4. Import normalized facts and persist durable treatments where needed");
   console.log("5. Run verify + review + summary");
   console.log("Reports generated before reading program.md and policy.md should be treated as heuristic and provisional.");
   console.log();
   console.log("Suggested agent prompt:");
   console.log("Use clawbooks properly. Read `.books/program.md` and `.books/policy.md` before importing or reporting.");
-  console.log("Then inspect the source documents, import normalized events, run verify/review/summary, and distinguish policy-backed classifications from inferred ones.");
+  console.log("Then inspect the source documents, import normalized facts, persist durable treatment events where needed, run verify/review/summary, and distinguish policy-backed classifications from inferred ones.");
   console.log("Do not treat bank inflows, transfers, exchange withdrawals, owner movements, hardware purchases, or tax flows as final P&L classifications unless policy supports that treatment.");
   console.log();
   console.log("Recommended .gitignore additions:");

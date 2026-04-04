@@ -77,6 +77,18 @@ For append-only review trails:
 - `correction` records non-category fixes against an earlier event via `data.original_id`
 - `confirm` records that an event was reviewed and accepted via `data.original_id`
 
+## Durable treatments
+
+Use `treatment` events for case-level accounting judgments that are durable, material, and likely to matter again.
+
+Examples:
+
+- capitalize a specific equipment purchase with its own useful life
+- accrue a specific service bill into the prior month
+- persist a durable owner-boundary decision for a specific transaction or counterparty
+
+Keep those specific judgments out of `policy.md` when they can be referenced directly from the ledger. This policy should define the rule; the ledger should store the applied treatment for the specific case.
+
 ## Revenue recognition
 
 Basis is declared in the structured hints above.
@@ -109,8 +121,8 @@ See capitalization policy below. Hardware, equipment, and other tangible assets 
 
 - **Threshold**: $2,500 — items below this are expensed immediately
 - **Method**: straight-line depreciation
-- **Default useful life**: 36 months (per-asset override via `data.useful_life_months`)
-- **Selection**: events with `data.capitalize: true` appear in the asset register
+- **Default useful life**: 36 months (per-asset override belongs in the `capitalize_asset` treatment position)
+- **Selection**: purchases appear in the asset register when an active `capitalize_asset` treatment references them
 - **Disposal**: record a `disposal` event with `data.asset_id` and `data.proceeds`. Gain/loss = proceeds - net book value
 - **Write-off**: record a `write_off` event with `data.asset_id`. Remaining NBV is a loss
 - **Impairment**: record an `impairment` event with `data.asset_id` and `data.impairment_amount`. Reduces carrying value

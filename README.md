@@ -20,7 +20,7 @@ And one core reference:
 
 - `docs/event-schema.md`: the canonical event envelope and schema evolution guide
 
-The ledger stores facts. The policy states the accounting rules. The agent does the reasoning.
+The ledger stores facts and durable accounting treatments. The policy states the accounting rules. The agent does the reasoning.
 
 Clawbooks also tracks whether a run is:
 
@@ -31,7 +31,7 @@ No rules engine. No SDK. No framework.
 
 ## What Clawbooks Is
 
-Clawbooks is for the workflow where an agent reads raw financial material, normalizes it into durable ledger events, validates the result, and then produces reporting outputs from the same record.
+Clawbooks is for the workflow where an agent reads raw financial material, normalizes it into durable ledger events, persists durable accounting judgments when needed, validates the result, and then produces reporting outputs from the same record.
 
 Bring:
 
@@ -43,9 +43,9 @@ Bring:
 - receipts
 - copied transaction text
 
-Clawbooks does not try to parse PDFs for you. The intended boundary is: the agent extracts structured rows upstream, then Clawbooks stores and checks the resulting facts.
+Clawbooks does not try to parse PDFs for you. The intended boundary is: the agent extracts structured rows upstream, then Clawbooks stores and checks the resulting facts and treatments.
 
-The agent reads the source, applies `policy.md`, writes normalized events into clawbooks, and then uses the CLI to produce financial outputs and audit evidence.
+The agent reads the source, applies `policy.md`, persists durable case-level treatment where needed, and then uses the CLI to produce financial outputs and audit evidence.
 
 ## Why It Exists
 
@@ -55,6 +55,7 @@ Clawbooks takes the opposite position:
 
 - the ledger stores financial facts
 - the policy describes interpretation in plain English
+- durable case-level accounting judgment is persisted as append-only `treatment` events
 - the agent performs the accounting work
 
 That makes clawbooks useful anywhere an agent can read files and run shell commands.
@@ -78,6 +79,8 @@ Clawbooks is not just for lightweight summaries. The toolchain is intended to su
 The outputs come from combining `summary`, `context`, `documents`, `assets`, `verify`, `reconcile`, and `pack` with the rules in `policy.md`.
 The same pure business logic is also exported as `clawbooks/operations` for non-CLI adapters.
 
+If a judgment is durable, material, and likely to matter again, persist it as a `treatment` event in `ledger.jsonl` instead of re-inferring it on every report run.
+
 Those outputs should be read together with the run state:
 
 - use `clawbooks workflow ack --program --policy` once the agent has read the operating files for the current run
@@ -92,9 +95,9 @@ CSV / statement / receipt / export / copied text
   ->
 Agent reads program.md + policy.md
   ->
-Agent normalizes source material into clawbooks events
+Agent normalizes source material into clawbooks facts and treatments
   ->
-ledger.jsonl stores append-only financial facts
+ledger.jsonl stores append-only financial facts and durable accounting positions
   ->
 verify / reconcile / review / snapshot
   ->
@@ -191,8 +194,9 @@ Then:
 3. Tailor the policy to the entity, jurisdiction, basis, and review rules
 4. Run `clawbooks workflow ack --program --policy`
 5. Import normalized events with `clawbooks record` or `clawbooks batch`
-6. Run `clawbooks verify` and `clawbooks reconcile`
-7. Use reporting commands to produce the required financial view
+6. Persist durable accounting judgments as `treatment` events when they should be reused
+7. Run `clawbooks verify` and `clawbooks reconcile`
+8. Use reporting commands to produce the required financial view
 
 If you skip the acknowledgment step, reporting remains provisional by design.
 
@@ -223,6 +227,8 @@ It should define:
 - reconciliation expectations
 - any jurisdiction-specific tax or accounting conventions
 
+It should not try to enumerate every case-level accounting decision. Use `treatment` events for durable judgments tied to specific facts, documents, or contracts.
+
 ### `ledger.jsonl`
 
 This is the append-only ledger.
@@ -237,6 +243,8 @@ Each line is a canonical event envelope with:
 - previous-line hash pointer
 
 See [docs/event-schema.md](./docs/event-schema.md) for the schema and field conventions.
+
+`ledger.jsonl` stores both financial facts and durable `treatment` events. Treatments are append-only accounting theses, not stored report blobs.
 
 ## Commands By Job
 
@@ -345,6 +353,7 @@ clawbooks pack 2026-03 --out ./march-pack --allow-provisional
 `documents` now supports debtor/creditor-style grouping and export without adding accounting rules: use `--direction`, `--status`, `--counterparty`, `--group-by counterparty`, or `documents counterparties`.
 `verify --diagnose` adds likely-cause hints for balance mismatches such as running-balance disagreement, duplicate-like rows, or currency-mixing.
 When you pass `--base-currency`, `summary`, `context`, and `pack` only use explicit `data.base_amount` + `data.base_currency` facts for converted totals. They do not derive converted totals from `data.fx_rate` or `data.price_usd`.
+`summary`, `context`, `assets`, `snapshot`, and `pack` compile durable accounting consequences from active `treatment` events, so capitalization and accrual judgment does not need to be re-inferred on every run.
 `summary`, `context`, and `review` can be run in provisional mode when you explicitly choose exploratory output. `pack` is stricter: it refuses provisional runs unless you pass `--allow-provisional`.
 `pack --base-currency` is stricter again: it refuses partial FX coverage unless you also pass `--allow-partial-fx`.
 For non-CLI integrations, the same logic is available from `clawbooks/operations`.
@@ -415,6 +424,7 @@ That document defines:
 - required fields
 - sign conventions
 - known event types
+- treatment event families
 - document events
 - snapshot events
 - review and correction events

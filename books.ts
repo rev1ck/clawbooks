@@ -64,6 +64,10 @@ State when expenses are recognized.
 
 Explain how invoices, bills, and settlements should be interpreted.
 
+## Durable treatments
+
+Describe which case-level judgments should be persisted as treatment events instead of re-inferred each time.
+
 ## Tax and reporting notes
 
 Add any filing, tax, capitalization, or review rules the agent should follow.

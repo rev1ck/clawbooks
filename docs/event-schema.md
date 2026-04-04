@@ -23,7 +23,7 @@ The words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are used in their plain no
 ## Design Rules
 
 1. Facts before interpretation.
-   The ledger MUST store what happened, when, from where, and with what traceability. Recognition policy, tax treatment, reporting basis, and classification judgment belong in `policy.md`.
+   The ledger MUST store what happened, when, from where, and with what traceability. General recognition policy, tax treatment, and reporting basis belong in `policy.md`; durable case-level accounting judgment belongs in append-only `treatment` events.
 2. Append-only history.
    Historical rows MUST NOT be rewritten in place. Later reinterpretation SHOULD be represented by follow-up audit events.
 3. Stable envelope.
@@ -130,6 +130,8 @@ Current CLI currency exemptions:
 - `opening_balance`
 - `correction`
 - `confirm`
+- `treatment`
+- `treatment_supersede`
 
 Recommended baseline fields for most money-movement events:
 
@@ -215,6 +217,12 @@ Document events SHOULD use:
 
 `reclassify`, `correction`, `confirm`, `snapshot`, `opening_balance`
 
+### Treatments
+
+`treatment`, `treatment_supersede`
+
+Treatment events persist durable accounting positions such as capitalization, accrual timing, owner-boundary decisions, and classification overrides.
+
 ### Asset lifecycle
 
 `disposal`, `write_off`, `impairment`
@@ -294,11 +302,27 @@ The canonical recommendation is:
 
 | Field | Meaning |
 |---|---|
-| `capitalize` | include in asset register |
-| `useful_life_months` | depreciation life override |
 | `asset_id` | original capitalized event id |
 | `impairment_amount` | impairment value |
 | `proceeds` | disposal proceeds |
+
+Capitalization judgment SHOULD be stored as a `treatment` event rather than as an inline flag on the purchase row.
+
+### Treatments
+
+Common `treatment` fields:
+
+| Field | Meaning |
+|---|---|
+| `treatment_id` | stable identifier for the accounting position |
+| `treatment_kind` | kind such as `capitalize_asset` or `accrual` |
+| `applies_to` | scope anchors such as `event_ids` or `document_ids` |
+| `status` | `proposed`, `active`, `superseded`, or `rejected` |
+| `effective_from` | start date for applying the treatment |
+| `effective_to` | optional end date |
+| `position` | treatment-specific structured accounting thesis |
+| `justification_summary` | concise durable explanation |
+| `compile_strategy` | deterministic downstream compilation bridge |
 
 ### FX and lot tracking
 
@@ -396,6 +420,37 @@ Convention:
     "new_category": "software",
     "new_type": "expense",
     "reason": "AWS support charge was miscategorized as hosting"
+  }
+}
+```
+
+### Treatment event
+
+```json
+{
+  "source": "agent_worker",
+  "type": "treatment",
+  "data": {
+    "treatment_id": "trt_asset_laptop_2026_02",
+    "treatment_kind": "capitalize_asset",
+    "applies_to": {
+      "event_ids": ["evt_laptop_purchase"]
+    },
+    "status": "active",
+    "effective_from": "2026-02-16",
+    "recognition_basis": "capitalized",
+    "reporting_impact": ["pnl", "balance_sheet", "assets"],
+    "position": {
+      "asset_class": "computer_equipment",
+      "cost_basis": 300,
+      "depreciation_method": "straight_line",
+      "useful_life_months": 36,
+      "in_service_date": "2026-02-16",
+      "salvage_value": 0
+    },
+    "justification_summary": "Computer equipment with multi-period utility; capitalize under current policy.",
+    "confidence": "clear",
+    "compile_strategy": "asset_schedule"
   }
 }
 ```

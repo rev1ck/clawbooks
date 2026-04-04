@@ -76,6 +76,18 @@ This policy defines how to interpret events, not a separate storage schema.
 - Record write identity with `data.recorded_by`, `data.recorded_via`, and `data.import_session`.
 - Use `correction` events for field-level fixes and `confirm` events to mark reviewed entries as accepted.
 
+## Durable treatments
+
+Use `treatment` events for durable case-level accounting positions that should survive across later P&L, balance-sheet, and drill-down runs.
+
+Examples for this operation:
+
+- a specific accrual around month-end service or venue charges
+- a durable owner-boundary decision on a mixed personal/business flow
+- a durable classification override where a recurring source needs a specific accounting treatment
+
+Keep venue-wide rules here in policy. Keep specific applied judgments in the ledger as treatments.
+
 ## Jurisdiction notes
 
 The IRS treats crypto as property (Notice 2014-21, Rev. Rul. 2019-24). For a frequent trader:

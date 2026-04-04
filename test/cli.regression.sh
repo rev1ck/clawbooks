@@ -21,18 +21,36 @@ cat > "$EVENTS" <<'EOF'
 {"source":"manual","type":"opening_balance","ts":"2026-01-01T00:00:00.000Z","data":{"amount":1000,"currency":"USD","account":"checking","category":"cash"}}
 {"source":"bank","type":"income","ts":"2026-02-20T00:00:00.000Z","data":{"amount":500,"currency":"USD","category":"service_revenue","description":"Client payment","confidence":"clear"}}
 {"source":"bank","type":"expense","ts":"2026-02-18T00:00:00.000Z","data":{"amount":120,"currency":"USD","category":"software","description":"Subscription","confidence":"clear"}}
-{"source":"bank","type":"expense","ts":"2026-02-16T00:00:00.000Z","data":{"amount":300,"currency":"USD","category":"hardware","description":"Laptop","confidence":"clear","capitalize":true,"useful_life_months":36}}
+{"source":"bank","type":"expense","ts":"2026-02-16T00:00:00.000Z","data":{"amount":300,"currency":"USD","category":"hardware","description":"Laptop","confidence":"clear"}}
 {"source":"bank","type":"transfer_in","ts":"2026-02-15T00:00:00.000Z","data":{"amount":250,"currency":"USD","category":"internal_transfer","description":"Move from reserve","confidence":"clear"}}
 {"source":"bank","type":"owner_draw","ts":"2026-02-14T00:00:00.000Z","data":{"amount":50,"currency":"USD","category":"owner_draw","description":"Distribution","confidence":"clear"}}
 EOF
 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js batch < "$EVENTS" >/dev/null
 
+HARDWARE_ID="$(node --input-type=module - <<'EOF'
+import { computeId } from "./build/ledger.js";
+const data = { amount: -300, currency: "USD", category: "hardware", description: "Laptop", confidence: "clear" };
+process.stdout.write(computeId(data, {
+  source: "bank",
+  type: "expense",
+  ts: "2026-02-16T00:00:00.000Z",
+}));
+EOF
+)"
+
+cat > "$ROOT/treatments.jsonl" <<EOF
+{"source":"agent_worker","type":"treatment","ts":"2026-02-16T12:00:00.000Z","data":{"treatment_id":"trt_laptop_2026_02","treatment_kind":"capitalize_asset","applies_to":{"event_ids":["$HARDWARE_ID"]},"status":"active","effective_from":"2026-02-16","recognition_basis":"capitalized","reporting_impact":["pnl","balance_sheet","assets"],"position":{"asset_class":"computer_equipment","cost_basis":300,"depreciation_method":"straight_line","useful_life_months":36,"in_service_date":"2026-02-16","salvage_value":0},"justification_summary":"Laptop purchase is capitalized.","confidence":"clear","compile_strategy":"asset_schedule"}} 
+EOF
+
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js batch < "$ROOT/treatments.jsonl" >/dev/null
+
 SUMMARY_SHORTCUT="$ROOT/summary-shortcut.json"
 SUMMARY_EXPLICIT="$ROOT/summary-explicit.json"
 VERIFY_JSON="$ROOT/verify.json"
 STATS_JSON="$ROOT/stats.json"
 SNAPSHOT_JSON="$ROOT/snapshot.json"
+ASSETS_JSON="$ROOT/assets.json"
 CONTEXT_COMPACT="$ROOT/context-compact.txt"
 CONTEXT_VERBOSE="$ROOT/context-verbose.txt"
 CONTEXT_WITH_POLICY="$ROOT/context-with-policy.txt"
@@ -47,6 +65,7 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js summary 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js verify 2026-02 --balance 1280 --opening-balance 1000 --currency USD > "$VERIFY_JSON"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js stats > "$STATS_JSON"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js snapshot 2026-02 > "$SNAPSHOT_JSON"
+CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js assets --as-of 2026-02-28 > "$ASSETS_JSON"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 2026-02 > "$CONTEXT_COMPACT"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 2026-02 --verbose > "$CONTEXT_VERBOSE"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js context 2026-02 --include-policy > "$CONTEXT_WITH_POLICY"
@@ -57,15 +76,17 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js version 
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js > "$HELP_OUT"
 mkdir -p "$PACK_DIR"
 CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js pack 2026-02 --out "$PACK_DIR" --allow-provisional >/dev/null
+test -f "$PACK_DIR/treatments.csv" || { echo "FAIL: pack should include treatments.csv"; exit 1; }
 
-node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE" "$VERSION_OUT" "$HELP_OUT"
+node - <<'EOF' "$SUMMARY_SHORTCUT" "$SUMMARY_EXPLICIT" "$VERIFY_JSON" "$STATS_JSON" "$SNAPSHOT_JSON" "$ASSETS_JSON" "$PACK_DIR/summary.json" "$CONTEXT_COMPACT" "$CONTEXT_VERBOSE" "$CONTEXT_WITH_POLICY" "$POLICY_PATH_OUT" "$POLICY" "$POLICY_EXAMPLES_JSON" "$POLICY_SIMPLE_EXAMPLE" "$VERSION_OUT" "$HELP_OUT"
 const fs = require("fs");
-const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath, policyExamplesPath, policySimpleExamplePath, versionPath, helpPath] = process.argv.slice(2);
+const [summaryShortcutPath, summaryExplicitPath, verifyPath, statsPath, snapshotPath, assetsPath, packedSummaryPath, contextCompactPath, contextVerbosePath, contextWithPolicyPath, policyPathOutPath, expectedPolicyPath, policyExamplesPath, policySimpleExamplePath, versionPath, helpPath] = process.argv.slice(2);
 const summaryShortcut = JSON.parse(fs.readFileSync(summaryShortcutPath, "utf8"));
 const summaryExplicit = JSON.parse(fs.readFileSync(summaryExplicitPath, "utf8"));
 const verify = JSON.parse(fs.readFileSync(verifyPath, "utf8"));
 const stats = JSON.parse(fs.readFileSync(statsPath, "utf8"));
 const snapshot = JSON.parse(fs.readFileSync(snapshotPath, "utf8"));
+const assets = JSON.parse(fs.readFileSync(assetsPath, "utf8"));
 const packedSummary = JSON.parse(fs.readFileSync(packedSummaryPath, "utf8"));
 const contextCompact = fs.readFileSync(contextCompactPath, "utf8");
 const contextVerbose = fs.readFileSync(contextVerbosePath, "utf8");
@@ -84,17 +105,19 @@ assert(JSON.stringify(summaryShortcut.movement_summary) === JSON.stringify(summa
 assert(summaryShortcut.movement_summary.operating_inflows === 500, "operating inflows should be 500");
 assert(summaryShortcut.movement_summary.operating_outflows === 120, "capex should be excluded from operating outflows");
 assert(summaryShortcut.report_totals.capex === 300, "capex total should be separated");
+assert(summaryShortcut.treatments.active_count === 1, "summary should report active treatments");
 assert(summaryShortcut.report_totals.internal_transfers_in === 250, "transfer in should be separated");
 assert(summaryShortcut.report_totals.owner_distributions === 50, "owner draws should be separated");
 assert(verify.balance_check.matches === true, "opening-balance-aware verify should match");
 assert(verify.balance_check.net_movement === 280, "net movement should be 280");
 assert(verify.balance_check.closing_balance === 1280, "closing balance should be 1280");
-assert(verify.resolved_scope.event_count === 5, "verify should echo resolved scope event count");
+assert(verify.resolved_scope.event_count === 6, "verify should echo resolved scope event count");
 assert(stats.first === "2026-01-01T00:00:00.000Z", "stats.first should be chronological");
 assert(stats.last === "2026-02-20T00:00:00.000Z", "stats.last should be chronological");
 assert(snapshot.movement_summary.operating_inflows === 500, "snapshot should include operating movement summary");
 assert(!Object.prototype.hasOwnProperty.call(snapshot, "pnl"), "snapshot should not expose legacy raw pnl");
 assert(snapshot.report_totals.capex === 300, "snapshot should include capex totals");
+assert(assets.active.count === 1, "assets should include treatment-backed capitalized asset");
 assert(packedSummary.movement_summary.operating_net === 380, "pack summary should include operating movement summary");
 assert(contextCompact.includes('verbosity="compact"'), "default context should be compact");
 assert(contextVerbose.includes('verbosity="full"'), "verbose context should show full payloads");
@@ -111,6 +134,49 @@ assert(contextCompact.includes('"top_operating_expenses"'), "default context sum
 assert(contextVerbose.includes('"by_type"'), "verbose context should include the full internal summary");
 console.log("cli.regression.sh: ok");
 EOF
+
+INVALID_TREATMENT_ERR="$ROOT/invalid-treatment.err"
+if CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js record '{"source":"agent_worker","type":"treatment","data":{"treatment_id":"bad","treatment_kind":"capitalize_asset","status":"active","position":{"useful_life_months":36},"justification_summary":"x","confidence":"clear","compile_strategy":"asset_schedule"}}' > /dev/null 2> "$INVALID_TREATMENT_ERR"; then
+  echo "FAIL: invalid treatment should be rejected"; exit 1
+fi
+grep -q 'data.applies_to' "$INVALID_TREATMENT_ERR" || { echo "FAIL: invalid treatment should mention missing applies_to"; exit 1; }
+
+SUPERSEDE_ROOT="$(mktemp -d)"
+mkdir -p "$SUPERSEDE_ROOT/.books"
+cat > "$SUPERSEDE_ROOT/.books/policy.md" <<'EOF'
+# supersede policy
+EOF
+cat > "$SUPERSEDE_ROOT/base-events.jsonl" <<'EOF'
+{"source":"bank","type":"expense","ts":"2026-03-10T00:00:00.000Z","data":{"amount":1200,"currency":"USD","category":"hardware","description":"Workstation","confidence":"clear"}}
+EOF
+(cd "$SUPERSEDE_ROOT" && node "$REPO_ROOT/build/cli.js" batch < base-events.jsonl >/dev/null 2>&1)
+SUPERSEDE_EVENT_ID="$(node --input-type=module - <<EOF
+import { computeId } from "$REPO_ROOT/build/ledger.js";
+const data = { amount: -1200, currency: "USD", category: "hardware", description: "Workstation", confidence: "clear" };
+process.stdout.write(computeId(data, {
+  source: "bank",
+  type: "expense",
+  ts: "2026-03-10T00:00:00.000Z",
+}));
+EOF
+)"
+cat > "$SUPERSEDE_ROOT/treatments.jsonl" <<EOF
+{"source":"agent_worker","type":"treatment","ts":"2026-03-11T00:00:00.000Z","data":{"treatment_id":"trt_ws_v1","treatment_kind":"capitalize_asset","applies_to":{"event_ids":["$SUPERSEDE_EVENT_ID"]},"status":"active","effective_from":"2026-03-10","recognition_basis":"capitalized","reporting_impact":["pnl","balance_sheet","assets"],"position":{"asset_class":"computer_equipment","cost_basis":1200,"depreciation_method":"straight_line","useful_life_months":36,"in_service_date":"2026-03-10","salvage_value":0},"justification_summary":"Initial capitalization.","confidence":"clear","compile_strategy":"asset_schedule"}}
+{"source":"agent_worker","type":"treatment","ts":"2026-03-12T00:00:00.000Z","data":{"treatment_id":"trt_ws_v2","treatment_kind":"capitalize_asset","applies_to":{"event_ids":["$SUPERSEDE_EVENT_ID"]},"status":"active","effective_from":"2026-03-10","recognition_basis":"capitalized","reporting_impact":["pnl","balance_sheet","assets"],"position":{"asset_class":"computer_equipment","cost_basis":1200,"depreciation_method":"straight_line","useful_life_months":24,"in_service_date":"2026-03-10","salvage_value":0},"justification_summary":"Replacement useful life.","confidence":"clear","compile_strategy":"asset_schedule"}}
+{"source":"agent_worker","type":"treatment_supersede","ts":"2026-03-12T01:00:00.000Z","data":{"supersede_id":"sup_ws_1","prior_treatment_id":"trt_ws_v1","replacement_treatment_id":"trt_ws_v2","reason":"Updated useful life.","confidence":"clear"}}
+EOF
+(cd "$SUPERSEDE_ROOT" && node "$REPO_ROOT/build/cli.js" batch < treatments.jsonl >/dev/null 2>&1)
+SUPERSEDE_ASSETS="$SUPERSEDE_ROOT/assets.json"
+(cd "$SUPERSEDE_ROOT" && node "$REPO_ROOT/build/cli.js" assets --as-of 2026-03-31 2>&1) > "$SUPERSEDE_ASSETS"
+node - <<'EOF' "$SUPERSEDE_ASSETS"
+const fs = require("fs");
+const assets = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+if (assets.active.count !== 1) throw new Error("superseded treatment should still leave one active asset");
+if (assets.active.assets[0].useful_life_months !== 24) throw new Error("replacement treatment should control useful life");
+if (assets.treatments.active_count !== 1) throw new Error("only replacement treatment should remain active");
+console.log("treatment supersede: ok");
+EOF
+rm -rf "$SUPERSEDE_ROOT"
 
 STAGED_NO_IDS="$ROOT/staged-no-ids.jsonl"
 cat > "$STAGED_NO_IDS" <<'EOF'
@@ -131,7 +197,7 @@ CLAWBOOKS_LEDGER="$LEDGER" CLAWBOOKS_POLICY="$POLICY" node build/cli.js verify 2
 node - <<'EOF' "$VERIFY_YEAR_JSON"
 const fs = require("fs");
 const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-if (report.event_count !== 6) throw new Error(`verify 2026 should include the full 2026 slice, got ${report.event_count}`);
+if (report.event_count !== 7) throw new Error(`verify 2026 should include the full 2026 slice, got ${report.event_count}`);
 EOF
 
 VERIFY_DIAG_ROOT="$(mktemp -d)"

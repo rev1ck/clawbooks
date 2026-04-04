@@ -24,12 +24,12 @@ export function cmdQuickstart(params: {
     command: "quickstart",
     cwd: resolve("."),
     what_clawbooks_is: {
-      summary: "Financial memory for agents: a ledger of facts, a policy for interpretation, and a program for operating the workflow.",
+      summary: "Financial memory for agents: a ledger of facts and treatments, a policy for interpretation, and a program for operating the workflow.",
       mental_model: [
         "Read program.md to learn how clawbooks works.",
         "Read policy.md to learn how the current books should be interpreted.",
         "Read ledger.jsonl as the append-only financial record.",
-        "The ledger stores facts. The agent does the accounting.",
+        "The ledger stores facts and durable treatments. The agent does the accounting.",
       ],
     },
     core_files: {
@@ -80,18 +80,20 @@ export function cmdQuickstart(params: {
       "Prefer importing full source coverage when practical; cut periods later for reporting and checks.",
       "For statement-shaped imports, run `clawbooks import check ... --statement ... --save-session` before append.",
       "Import normalized events with `clawbooks record` or `clawbooks batch`.",
+      "Persist durable case-level accounting judgment as treatment events when it should survive later report runs.",
       "Run `clawbooks verify`, `clawbooks review`, and `clawbooks summary` after imports.",
       "Use `clawbooks summary`, `clawbooks context`, `clawbooks documents`, `clawbooks assets`, and `clawbooks pack` to produce reports, checks, and audit-ready outputs.",
     ],
     canonical_agent_prompt: [
       "Use clawbooks properly.",
       "Read `.books/program.md` and `.books/policy.md` before importing or reporting.",
-      "Then inspect the source documents, import normalized events, run verify/review/summary, and clearly distinguish policy-backed classifications from inferred ones.",
+      "Then inspect the source documents, import normalized facts, persist durable treatment events where needed, run verify/review/summary, and clearly distinguish policy-backed classifications from inferred ones.",
       "Do not treat bank inflows, transfers, exchange withdrawals, owner movements, hardware purchases, or tax flows as final P&L classifications unless policy supports that treatment.",
     ].join(" "),
     workflow: {
       import: [
         "Inspect the source files and normalize them into clawbooks events.",
+        "Persist durable case-level accounting judgment as treatment events when it should be reused later.",
         "If you need a starting point, generate an editable template with `clawbooks import scaffold <kind>`.",
         "For a bank or card statement export, `statement-csv` is usually the right scaffold.",
         "For many opening balances, `opening-balances` is the shortest path to explicit starting facts.",
@@ -109,8 +111,8 @@ export function cmdQuickstart(params: {
         "Use `clawbooks summary` for precomputed movement totals and report sections.",
         "Use `clawbooks context` for event-level reasoning, snapshot-aware analysis, and policy-guided interpretation.",
         "Use `clawbooks documents` for receivables, payables, settlement, aging, and counterparty-grouped debtor/creditor views.",
-        "Use `clawbooks assets` for asset register and depreciation views.",
-        "Use `clawbooks pack` for exportable audit packs.",
+        "Use `clawbooks assets` for treatment-backed asset register and depreciation views.",
+        "Use `clawbooks pack` for exportable audit packs including persisted treatments.",
         "Combine these with policy.md to produce P&L, balance sheet, cash flow, tax views, reconciliations, and custom reporting cuts.",
       ],
     },

@@ -10,12 +10,26 @@ export interface LedgerEvent {
   prev: string;
 }
 
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stableValue(entry));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([key, entry]) => [key, stableValue(entry)]),
+  );
+}
+
 export function computeId(
   data: Record<string, unknown>,
   meta: { source: string; type: string; ts: string },
 ): string {
-  const sortedData = JSON.stringify(data, Object.keys(data).sort());
-  const envelope = { data: sortedData, source: meta.source, ts: meta.ts, type: meta.type };
+  const envelope = {
+    data: stableValue(data),
+    source: meta.source,
+    ts: meta.ts,
+    type: meta.type,
+  };
   const canonical = JSON.stringify(envelope);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
 }
@@ -45,7 +59,15 @@ export function hashLine(line: string): string {
   return createHash("sha256").update(line).digest("hex").slice(0, 16);
 }
 
-const CURRENCY_EXEMPT_TYPES = new Set(["snapshot", "reclassify", "opening_balance"]);
+const CURRENCY_EXEMPT_TYPES = new Set([
+  "snapshot",
+  "reclassify",
+  "opening_balance",
+  "correction",
+  "confirm",
+  "treatment",
+  "treatment_supersede",
+]);
 
 export function append(path: string, event: LedgerEvent): boolean {
   if (!CURRENCY_EXEMPT_TYPES.has(event.type) && event.data.currency === undefined) {

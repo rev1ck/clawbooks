@@ -66,6 +66,17 @@ This policy defines how to interpret events, not a separate storage schema.
 - Use `data.recorded_by` or `data.import_session` when an agent writes events in bulk.
 - Use `correction` events for non-category fixes and `confirm` events when reviewed items become accepted.
 
+## Durable treatments
+
+Use `treatment` events when a judgment should be reused later instead of re-inferred each time.
+
+Examples for this business:
+
+- a specific laptop purchase above threshold should get its own `capitalize_asset` treatment
+- a specific owner-paid item should get its own owner-boundary treatment
+
+Keep those specific decisions in the ledger, not in `policy.md`.
+
 ## Revenue recognition
 
 Cash basis. Income is recognized when payment is received, not when invoiced. Invoices and bills are tracking events — they do not create recognized revenue or expenses.
@@ -77,7 +88,7 @@ Crypto payments are converted to USD at the spot price at time of receipt and re
 
 - **Software subscriptions** (Figma, hosting, domains): operating expenses
 - **Contractor payments**: cost of goods sold
-- **Hardware** (laptops, monitors): capitalize if over $2,500, otherwise operating expense. Depreciate capitalized assets over 3 years straight-line.
+- **Hardware** (laptops, monitors): if over $2,500, record a `capitalize_asset` treatment and depreciate over 3 years straight-line. Otherwise treat as operating expense.
 - **Home office**: allocate 15% of rent and utilities as business expense
 - **Meals with clients**: 50% deductible business expense
 - **Conference travel**: fully deductible if business purpose documented

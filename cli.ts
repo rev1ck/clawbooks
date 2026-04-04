@@ -72,7 +72,7 @@ Mental model:
   The agent reads program.md to learn how clawbooks works.
   The agent reads policy.md to learn how the current books should be accounted for.
   The agent reads event-schema.md to learn the canonical event envelope.
-  The ledger stores facts. The agent does the accounting.
+  The ledger stores facts and durable treatments. The agent does the accounting.
   Outputs are either policy_grounded or provisional.
   Provisional runs are exploratory; they should not be presented as final accounting.
 
@@ -82,8 +82,9 @@ First run:
   3. Read policy.md
   4. clawbooks workflow ack --program --policy
   5. Import normalized events with record/batch
-  6. Run verify + reconcile
-  7. Use summary, context, documents, assets, and pack to produce reports, checks, and audit-ready outputs
+  6. Persist durable case-level judgment as treatment events when it should be reused
+  7. Run verify + reconcile
+  8. Use summary, context, documents, assets, and pack to produce reports, checks, and audit-ready outputs
 
 Setup:
   init        [--books DIR] [--example NAME]
@@ -134,7 +135,7 @@ Report and analyze:
                               Compare expected vs actual totals
   verify    [period] [flags]  Integrity + chain + balance check + duplicate detection
   assets    [flags]           Asset register and depreciation view
-  pack      [period] [flags]  Generate audit pack (CSVs + JSON + policy)
+  pack      [period] [flags]  Generate audit pack (CSVs + JSON + policy + treatments)
 
 Maintenance:
   snapshot  [period] [--save] Compute or save a derived checkpoint event
@@ -149,6 +150,7 @@ Important terms:
   policy_grounded Output produced after current-run workflow grounding
   provisional  Exploratory output produced without full workflow grounding
   snapshot     Saved derived checkpoint in the ledger; not the source of truth
+  treatment    Durable accounting position persisted in the ledger and reused by later reports
 
 Library surface:
   Import pure shared business logic from clawbooks/operations when you need
@@ -196,7 +198,8 @@ Quick examples:
 
 Outcome surface:
   Use clawbooks to build P&L, balance sheet, cash flow, receivable/payable views,
-  tax cuts, asset registers, reconciliations, audit packs, and custom period analysis.
+  tax cuts, asset registers, reconciliations, audit packs, treatment-backed schedules,
+  and custom period analysis.
 
 Recommended first session:
   clawbooks init
@@ -408,7 +411,7 @@ Examples:
   clawbooks review batch 2026-03 --out reclassify.jsonl --action reclassify --confidence unclear --new-category software`,
     summary: `Usage: clawbooks summary [period] [flags] [--base-currency C] [--allow-provisional]
 
-Produce report aggregates, report sections, settlement summaries, review materiality, and coverage metadata.
+Produce report aggregates, treatment-aware report sections, settlement summaries, review materiality, and coverage metadata.
 When --base-currency is set, clawbooks adds a converted reporting view using explicit data.base_amount facts only.
 Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 Period may be a calendar range like 2026-03 or a fiscal-year shorthand like FY2025 when policy.md defines reporting.financial_year_end.
@@ -465,7 +468,7 @@ Example:
   clawbooks doctor`,
     context: `Usage: clawbooks context [period] [--include-policy] [--verbose] [--base-currency C] [--allow-provisional]
 
-Print policy-aware context for reasoning and reporting.
+Print policy-aware, treatment-aware context for reasoning and reporting.
 When --base-currency is set, the summary block includes explicit converted reporting plus FX coverage warnings.
 Use --allow-provisional only when you intentionally want exploratory output before workflow grounding.
 
@@ -476,6 +479,7 @@ Examples:
     record: `Usage: clawbooks record '<json>' [--classification-basis BASIS] [--allow-provisional]
 
 Append one event to the ledger and surface the run-level grounding state.
+Accepts fact events and durable treatment events.
 
 Examples:
   clawbooks record '{"source":"bank","type":"income","data":{"amount":500,"currency":"USD"}}'
@@ -483,6 +487,7 @@ Examples:
     batch: `Usage: clawbooks batch [--classification-basis BASIS] [--allow-provisional] [--dry-run] [--import-session ID]
 
 Append JSONL events from stdin and surface the run-level grounding state.
+Accepts fact events and durable treatment events.
 Use --dry-run to see whether anything new would append without mutating the ledger.
 If you pass --import-session, clawbooks updates that session lifecycle and rebuilds imports/session-index.json.
 
@@ -502,7 +507,7 @@ Example:
   clawbooks documents counterparties FY2025 --direction issued --format csv`,
     pack: `Usage: clawbooks pack [period] [--out DIR] [--base-currency C] [--allow-partial-fx] [--allow-provisional]
 
-Generate an audit pack with CSVs, JSON, and the applied policy.
+Generate an audit pack with CSVs, JSON, the applied policy, and persisted treatments.
 Pack refuses provisional runs unless you pass --allow-provisional.
 If --base-currency is set, pack also requires complete explicit FX coverage unless you pass --allow-partial-fx.
 
