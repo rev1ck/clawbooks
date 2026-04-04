@@ -167,6 +167,25 @@ Start with `summary`, not `context`. Use `context` only when you need event-leve
 | Integrity and source-total checks | `verify`, `reconcile` |
 | Audit-ready export | `pack` |
 
+### Canonical finalized report output
+
+When producing a finalized report for a host, UI, or audit workflow, the canonical output should be a structured reporting artifact.
+
+That artifact should contain:
+
+- views
+- rows
+- contributors
+- anchors to facts, documents, treatments, snapshots, and evidence locators
+- checks and exceptions
+- workflow and fingerprint metadata
+
+Do not produce two independently-authored versions of the same report by default.
+
+If human-facing markdown, HTML, or PDF is needed, treat it as a rendering derived from the structured artifact rather than a separate report authority.
+
+Do not dump chain-of-thought or verbose reasoning traces into the artifact.
+
 ### Mapping to financial statements
 
 **P&L**: Use `movement_summary`, `report_sections`, and `report_totals` from `summary` as raw aggregates. Apply the accounting basis from `policy.md` to determine recognized revenue and expenses. Under accrual, include document events. Under cash, include only cash events.

@@ -79,6 +79,10 @@ Clawbooks is not just for lightweight summaries. The toolchain is intended to su
 The outputs come from combining `summary`, `context`, `documents`, `assets`, `verify`, `reconcile`, and `pack` with the rules in `policy.md`.
 The same pure business logic is also exported as `clawbooks/operations` for non-CLI adapters.
 
+For agent-hosted reporting, prefer one authoritative structured report artifact as the finalized output.
+Let the host UI or adapter render from that artifact for human consumption instead of asking the agent for duplicated prose and JSON versions of the same report.
+Rendered markdown, HTML, or PDF is still useful when you need a distribution copy or sign-off snapshot, but it should be derived from the artifact rather than treated as a second source of truth.
+
 If a judgment is durable, material, and likely to matter again, persist it as a `treatment` event in `ledger.jsonl` instead of re-inferring it on every report run.
 
 Those outputs should be read together with the run state:

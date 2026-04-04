@@ -86,17 +86,18 @@ A finalized reporting run has four conceptual stages:
 2. Inference
    - the agent reasons over those inputs
    - the agent decides the report structure and accounting interpretation for the requested view
+   - the agent emits the report views, rows, contributors, and anchors for the finalized answer
 
 3. Finalized output
-   - human-facing report output
-   - structured reporting artifact
+   - canonical structured reporting artifact
+   - optional rendered output derived from that artifact
 
 4. Post-processing
    - deterministic validation
    - deterministic fingerprinting
    - optional packaging for export or audit
 
-The structured artifact is a record of stage 3, with additional deterministic metadata from stage 4.
+The structured artifact is the authoritative record of stage 3, with additional deterministic metadata from stage 4.
 
 ## 6. Key Principle: Support Contract, Not Thought Trace
 
@@ -140,8 +141,9 @@ The agent:
 
 - reads truth inputs
 - interprets the report request
-- assembles the requested accounting view
-- emits a compact structured artifact alongside the human-facing answer
+- decides the requested accounting view
+- emits the report structure for that view
+- emits a compact structured artifact as the canonical report output
 
 ### 7.3 Deterministic packaging layer
 
@@ -150,18 +152,37 @@ Code may:
 - validate artifact shape
 - compute fingerprints
 - normalize field order
+- normalize model-emitted report structure into a stable artifact envelope
 - verify arithmetic invariants
 - attach workflow and environment metadata
 - package the artifact with companion files
 
 Code must not become the accounting engine.
 
+Code must not independently decide:
+
+- which report rows should exist
+- how facts should be grouped into report lines
+- what recognition basis applies
+- which accounting interpretation wins in a novel case
+
 ## 8. Required Outputs For a Finalized Report Run
 
-A finalized run should emit at least:
+A finalized run should emit:
 
-- `report.md` or equivalent human-facing output
 - `artifact.json`
+
+Optional rendered outputs may also be emitted when needed for humans, sign-off packets, or static export workflows.
+
+Examples:
+
+- `report.md`
+- rendered HTML
+- PDF
+
+Those rendered outputs must be derived from `artifact.json`.
+
+They must not become a second independently-authored source of truth.
 
 An audit-oriented pack may additionally include:
 
@@ -175,7 +196,60 @@ An audit-oriented pack may additionally include:
 - `program.md`
 - family-specific schedules where relevant
 
-## 9. Artifact Design Goals
+## 9. Single Authoritative Output
+
+The canonical report output is the structured artifact.
+
+This spec explicitly prefers one authoritative report representation over duplicated parallel outputs.
+
+### 9.1 Why duplicated outputs are risky
+
+If the model emits both:
+
+- a prose report
+- a separate structured report
+
+then those two outputs can drift.
+
+That creates avoidable risk for:
+
+- UX consumers
+- auditors
+- rerun comparison
+- sign-off workflows
+
+### 9.2 Preferred pattern
+
+The preferred pattern is:
+
+1. the agent emits `artifact.json`
+2. hosts render that artifact for human consumption
+3. optional static snapshots are stored only when needed
+
+### 9.3 When a rendered snapshot is useful
+
+A rendered snapshot is useful when the system must preserve:
+
+- exactly what a reviewer saw
+- a board or auditor distribution copy
+- a PDF or markdown attachment for offline review
+
+Even then, the rendered snapshot should be treated as a derived presentation artifact, not the canonical report payload.
+
+### 9.4 Rules-engine boundary
+
+The artifact format must not be mistaken for a reporting DSL or deterministic compiler.
+
+The existence of fields like `views`, `rows`, `contributors`, and `anchors` does not mean code is deciding the report.
+
+Those fields are the container for the model's finalized answer.
+
+The critical boundary is:
+
+- the agent decides report shape and support structure
+- code only normalizes, validates, fingerprints, and packages that emitted structure
+
+## 10. Artifact Design Goals
 
 The artifact must be:
 
@@ -193,7 +267,7 @@ The artifact should favor:
 - contributor references over copied event bodies
 - short exception codes over long prose
 
-## 10. Core Artifact Model
+## 11. Core Artifact Model
 
 The artifact has four main reporting objects:
 
@@ -210,6 +284,10 @@ The artifact has four main reporting objects:
    One immutable reference to ledger facts, treatments, documents, snapshots, or evidence locators
 
 This split is the core of generic drill-down.
+
+These objects are a reporting container format.
+
+They are not instructions for code to independently derive accounting outputs from the ledger.
 
 ### 10.1 View
 
@@ -265,7 +343,7 @@ Examples:
 - `data.source_row`
 - `data.source_hash`
 
-## 11. Canonical Top-Level Shape
+## 12. Canonical Top-Level Shape
 
 `artifact.json` should use this high-level shape:
 
@@ -282,7 +360,7 @@ Examples:
 
 Exact field naming may evolve, but the concepts are required.
 
-## 12. `meta`
+## 13. `meta`
 
 `meta` identifies the run and its accounting context.
 
@@ -308,7 +386,7 @@ Recommended fields:
 
 If a run is not policy-grounded, the artifact may still exist, but it must be explicitly marked provisional.
 
-## 13. `request`
+## 14. `request`
 
 `request` records what the run was asked to produce.
 
@@ -324,7 +402,7 @@ Recommended fields:
 
 This is important for rerun comparability.
 
-## 14. `views`
+## 15. `views`
 
 Each view is a compact report surface.
 
@@ -363,7 +441,7 @@ A view may carry dimensions such as:
 
 These dimensions should be explicit instead of implied by prose.
 
-## 15. `rows`
+## 16. `rows`
 
 Each row should be a first-class object.
 
@@ -429,7 +507,7 @@ Suggested row confidence values:
 
 Row confidence should summarize the quality of support, not the confidence of the model in general.
 
-## 16. `contributors`
+## 17. `contributors`
 
 Each row should list one or more contributors.
 
@@ -510,7 +588,7 @@ Use when the row is best supported through an intermediate schedule, for example
 
 The schedule itself may also be represented as rows in another view.
 
-## 17. `anchors`
+## 18. `anchors`
 
 Anchors are the bridge from the artifact to durable support.
 
@@ -568,7 +646,7 @@ Examples:
 - upstream object id
 - source hash
 
-## 18. Generic Drill-Down Contract
+## 19. Generic Drill-Down Contract
 
 The artifact must make drill-down possible without a UI knowing accounting-specific logic.
 
@@ -586,7 +664,7 @@ This works for:
 - asset subtotals
 - custom policy-defined analytical cuts
 
-## 19. Report-Family Examples
+## 20. Report-Family Examples
 
 ### 19.1 Income statement
 
@@ -640,7 +718,7 @@ Anchors:
 - impairment event id
 - disposal event id
 
-## 20. Audit Requirements
+## 21. Audit Requirements
 
 The artifact should let an auditor answer:
 
@@ -678,7 +756,7 @@ Suggested exception codes:
 
 Exceptions should be compact, structured, and machine-readable.
 
-## 21. Rerun Stability
+## 22. Rerun Stability
 
 Rerun stability means the same truth inputs and operating context should produce:
 
@@ -727,7 +805,7 @@ Future diffing should compare:
 - contributor sets
 - exceptions and checks
 
-## 22. Validation Rules
+## 23. Validation Rules
 
 Validation should remain lightweight and deterministic.
 
@@ -752,13 +830,17 @@ A validator must not:
 - invent missing support
 - silently coerce a provisional report into final status
 
-## 23. LLM Output Contract
+## 24. LLM Output Contract
 
 The LLM should not be asked for raw reasoning traces.
 
-It should be asked for a compact structured support artifact.
+It should be asked for one compact structured support artifact.
 
-### 23.1 The LLM should produce
+That artifact is the authoritative report output for the run.
+
+The prompt should avoid asking for a second independently-authored prose report unless a rendered snapshot is explicitly needed.
+
+### 24.1 The LLM should produce
 
 - requested views
 - rows
@@ -767,7 +849,9 @@ It should be asked for a compact structured support artifact.
 - anchor references
 - short structured notes on unresolved issues
 
-### 23.2 Deterministic code should produce
+If a human-facing summary is also requested, it should be framed as a rendering or summary of the structured artifact rather than a separate report authority.
+
+### 24.2 Deterministic code should produce
 
 - hashes
 - fingerprints
@@ -775,10 +859,11 @@ It should be asked for a compact structured support artifact.
 - arithmetic validation results
 - normalization of field order
 - package file layout
+- optional rendered outputs derived from the artifact
 
 This keeps the accounting with the agent while keeping stability and integrity checks in code.
 
-## 24. Minimum Provenance Expectations For Ledger Events
+## 25. Minimum Provenance Expectations For Ledger Events
 
 This spec does not require new top-level ledger fields.
 
@@ -797,33 +882,33 @@ For reporting-quality imports, events should include as available:
 
 Without stable provenance locators in events, downstream drill-down quality will be limited.
 
-## 25. Relationship To Existing Clawbooks Surfaces
+## 26. Relationship To Existing Clawbooks Surfaces
 
-### 25.1 `summary`
+### 26.1 `summary`
 
 `summary` remains the orientation surface.
 
 It should not be forced to become the canonical reporting artifact.
 
-### 25.2 `context`
+### 26.2 `context`
 
 `context` remains the investigation surface.
 
 It may help inspect event-level detail, but it is not the finalized artifact contract.
 
-### 25.3 `documents`
+### 26.3 `documents`
 
 `documents` remains the operational view for receivables, payables, and aging logic.
 
-Its outputs should be reusable as contributors or schedules within the artifact.
+Its outputs may provide mechanical support data that the agent uses when emitting contributors or schedules within the artifact.
 
-### 25.4 `assets`
+### 26.4 `assets`
 
 `assets` remains the operational asset register builder.
 
-Its outputs should be reusable as rows or schedules within the artifact.
+Its outputs may provide mechanical support data that the agent uses when emitting rows or schedules within the artifact.
 
-### 25.5 `pack`
+### 26.5 `pack`
 
 `pack` should be the first canonical emitter of `artifact.json`.
 
@@ -833,18 +918,23 @@ Reason:
 - it already enforces workflow guardrails
 - it naturally owns packaging of companion files
 
-## 26. Packaging Recommendation
+## 27. Packaging Recommendation
 
 The recommended first implementation is:
 
 - `pack` emits `artifact.json`
 - existing companion files remain
-- `artifact.json` becomes the canonical machine-readable record of the finalized report
+- `artifact.json` becomes the canonical report payload for the finalized run
+- rendered outputs, when present, are derived from `artifact.json`
+
+`pack` should package the artifact the agent emitted for the run.
+
+It should not independently compose the final report shape from ledger primitives.
 
 Suggested pack contents:
 
 - `artifact.json`
-- `report.md`
+- optional `report.md`
 - `summary.json`
 - `verify.json`
 - `workflow.json`
@@ -853,7 +943,7 @@ Suggested pack contents:
 - `policy.md`
 - `program.md`
 
-## 27. Minimal Example
+## 28. Minimal Example
 
 ```json
 {
@@ -926,13 +1016,15 @@ Suggested pack contents:
 }
 ```
 
-## 28. Rollout
+## 29. Rollout
 
 ### Phase 1
 
 - define `artifact.json` schema
 - emit it from `pack`
 - include metadata, rows, contributors, anchors, checks, and fingerprints
+- update `program.md` so finalized reporting asks for the structured artifact as the canonical output
+- update README and host guidance so adapters render from the artifact instead of requesting duplicated outputs
 
 ### Phase 2
 
@@ -945,7 +1037,31 @@ Suggested pack contents:
 - expose compact artifact-aware JSON from other surfaces where useful
 - add richer host integration guidance for non-CLI adapters
 
-## 29. Recommendation
+## 30. Documentation And Code Touchpoints
+
+The first implementation does not require a new rules engine or a large reporting subsystem.
+
+The main touchpoints are:
+
+- `program.md`
+  - instruct agents to emit the structured artifact as the canonical finalized output
+  - explain that optional rendered text is derived from the artifact
+- `README.md`
+  - guide hosts and prompt authors toward one authoritative structured report output
+  - explain when rendered snapshots are optional rather than required
+- `commands/pack.ts`
+  - emit `artifact.json` as the canonical report payload
+  - include optional rendered outputs only when requested
+- `operations.ts`
+  - normalize model-emitted artifact views, rows, contributors, anchors, checks, and fingerprints into a stable package shape
+  - validate arithmetic, references, and workflow metadata
+  - keep existing `summary`, `documents`, `assets`, and treatment compilation logic reusable as support inputs for the agent rather than hidden final-report authorities
+
+Other surfaces such as `summary` and `context` may remain as orientation and investigation tools.
+
+They do not need to become duplicate finalized report surfaces.
+
+## 31. Recommendation
 
 Clawbooks should adopt the reporting artifact as a compact record of one finalized inference-time report run.
 
